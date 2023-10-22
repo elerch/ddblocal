@@ -31,24 +31,50 @@ pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: un
         @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
     const is_authenticated = auth_bypass or
         try signing.verify(allocator, request, fis.reader(), getCreds);
-
+    // Universal lambda should check these and convert them to http
+    if (!is_authenticated) return error.Unauthenticated;
     // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html#API_CreateTable_Examples
     // Operation is in X-Amz-Target
     // event_data is json
-    var al = std.ArrayList(u8).init(allocator);
-    var writer = al.writer();
-    try writer.print("Mode: {}\nAuthenticated: {}\nValue for header 'Foo' is: {s}\n", .{
-        @import("builtin").mode,
-        is_authenticated,
-        headers.http_headers.getFirstValue("foo") orelse "undefined",
-    });
-    return al.items;
+    // X-Amz-Target: DynamoDB_20120810.CreateTable
+    const target_value = headers.http_headers.getFirstValue("X-Amz-Target").?;
+    const operation = target_value[std.mem.lastIndexOf(u8, target_value, ".").? + 1 ..];
+    if (std.ascii.eqlIgnoreCase("CreateTable", operation))
+        return @import("createtable.zig").handler(allocator, event_data);
+    try std.io.getStdErr().writer().print("Operation '{s}' unsupported\n", .{operation});
+    return error.OperationUnsupported;
 }
 
 fn getCreds(access: []const u8) ?signing.Credentials {
     if (std.mem.eql(u8, access, "ACCESS")) return test_credential;
     return null;
 }
+
+// These never need to be freed because we will need them throughout the program
+var iam_account_id: ?[]const u8 = null;
+var iam_access_key: ?[]const u8 = null;
+var iam_secret_key: ?[]const u8 = null;
+var iam_credential: ?signing.Credentials = null;
+fn iamCredentials(allocator: std.mem.Allocator) ![]const u8 {
+    if (iam_credential) |cred| return cred;
+    iam_credential = signing.Credentials.init(allocator, try iamAccessKey(allocator), try iamSecretKey(allocator), null);
+    return iam_credential.?;
+}
+fn iamAccountId(allocator: std.mem.Allocator) ![]const u8 {
+    return try getVariable(allocator, &iam_account_id, "IAM_ACCOUNT_ID");
+}
+fn iamAccessKey(allocator: std.mem.Allocator) ![]const u8 {
+    return try getVariable(allocator, &iam_access_key, "IAM_ACCESS_KEY");
+}
+fn iamSecretKey(allocator: std.mem.Allocator) ![]const u8 {
+    return try getVariable(allocator, &iam_secret_key, "IAM_SECRET_KEY");
+}
+fn getVariable(allocator: std.mem.Allocator, global: *?[]const u8, env_var_name: []const u8) ![]const u8 {
+    if (global) |gl| return gl;
+    global = try std.process.getEnvVarOwned(allocator, env_var_name);
+    return global.?;
+}
+
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
     defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
