@@ -76,7 +76,16 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     const aws_signing_module = aws_dep.module("aws-signing");
+    const sqlite_dep = b.dependency("sqlite", .{
+        .target = target,
+        .optimize = optimize,
+        .use_bundled = true,
+    });
+    const sqlite_module = sqlite_dep.module("sqlite");
     for (&[_]*std.Build.Step.Compile{ exe, unit_tests }) |cs| {
         cs.addModule("aws-signing", aws_signing_module);
+        cs.addModule("sqlite", sqlite_module);
+        cs.addIncludePath(.{ .path = "c" });
+        cs.linkLibrary(sqlite_dep.artifact("sqlite"));
     }
 }
