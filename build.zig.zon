@@ -1,0 +1,19 @@
+.{
+    .name = "ddblocal",
+    .version = "0.0.1",
+
+    .dependencies = .{
+        .aws = .{
+            .url = "https://git.lerch.org/lobo/aws-sdk-for-zig/archive/825d93720a92bcaedb3d00cd04764469fdec0c86.tar.gz",
+            .hash = "122038e86ca453cbb0b4d5534380470eeb0656fdbab9aca2b7d2dc77756ab659204a",
+        },
+        .universal_lambda_build = .{
+            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/d8b536651531ee95ceb4fae65ca5f29c5ed6ef29.tar.gz",
+            .hash = "1220de5b5f23fddb794e2e735ee8312b9cd0d1302d5b8e3902f785e904f515506ccf",
+        },
+        .flexilib = .{
+            .url = "https://git.lerch.org/lobo/flexilib/archive/c44ad2ba84df735421bef23a2ad612968fb50f06.tar.gz",
+            .hash = "122051fdfeefdd75653d3dd678c8aa297150c2893f5fad0728e0d953481383690dbc",
+        },
+    },
+}
