@@ -12,12 +12,12 @@
             .hash = "12208c654deea149cee27eaa45d0e6515c3d8f97d775a4156cbcce0ff424b5d26ea3",
         },
         .universal_lambda_build = .{
-            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/d8b536651531ee95ceb4fae65ca5f29c5ed6ef29.tar.gz",
-            .hash = "1220de5b5f23fddb794e2e735ee8312b9cd0d1302d5b8e3902f785e904f515506ccf",
+            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/6c89380fea51686b775a93d9a68150262a20d513.tar.gz",
+            .hash = "1220173c05fa58d0dceda2e2de99edb1a68b859006747cfcf80d7c908dda95f87db2",
         },
         .flexilib = .{
-            .url = "https://git.lerch.org/lobo/flexilib/archive/c44ad2ba84df735421bef23a2ad612968fb50f06.tar.gz",
-            .hash = "122051fdfeefdd75653d3dd678c8aa297150c2893f5fad0728e0d953481383690dbc",
+            .url = "https://git.lerch.org/lobo/flexilib/archive/3d3dab9c792651477932e2b61c9f4794ac694dcb.tar.gz",
+            .hash = "1220fd7a614fe3c9f6006b630bba528e2ec9dca9c66f5ff10f7e471ad2bdd41b6c89",
         },
     },
 }
