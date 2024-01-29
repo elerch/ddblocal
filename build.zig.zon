@@ -4,16 +4,16 @@
 
     .dependencies = .{
         .aws = .{
-            .url = "https://git.lerch.org/lobo/aws-sdk-for-zig/archive/825d93720a92bcaedb3d00cd04764469fdec0c86.tar.gz",
-            .hash = "122038e86ca453cbb0b4d5534380470eeb0656fdbab9aca2b7d2dc77756ab659204a",
+            .url = "https://git.lerch.org/lobo/aws-sdk-for-zig/archive/d08d0f338fb86f7d679a998ff4f65f4e2d0db595.tar.gz",
+            .hash = "122096bb1480cef9cc4a8abf112f54214de4ab500f6863e86fc919cb5a99533ff7ce",
         },
         .sqlite = .{
             .url = "https://github.com/vrischmann/zig-sqlite/archive/19535aab5760eeaf2979a9dadfca3bb21d1594b9.tar.gz",
             .hash = "12208c654deea149cee27eaa45d0e6515c3d8f97d775a4156cbcce0ff424b5d26ea3",
         },
         .universal_lambda_build = .{
-            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/6c89380fea51686b775a93d9a68150262a20d513.tar.gz",
-            .hash = "1220173c05fa58d0dceda2e2de99edb1a68b859006747cfcf80d7c908dda95f87db2",
+            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/e5a1099f741ddd6327e015e4c068de5c18d09393.tar.gz",
+            .hash = "122037f0b35ab67002ef039410ae4ddb6805e14c111557ab0ae2ec7837211f7a1c51",
         },
         .flexilib = .{
             .url = "https://git.lerch.org/lobo/flexilib/archive/3d3dab9c792651477932e2b61c9f4794ac694dcb.tar.gz",

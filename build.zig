@@ -1,5 +1,5 @@
 const std = @import("std");
-const configureUniversalLambdaBuild = @import("universal_lambda_build").configureBuild;
+const universal_lambda = @import("universal_lambda_build");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -60,6 +60,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    _ = try universal_lambda.addModules(b, unit_tests);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
@@ -69,7 +70,7 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    try configureUniversalLambdaBuild(b, exe);
+    try universal_lambda.configureBuild(b, exe);
 
     const aws_dep = b.dependency("aws", .{
         .target = target,

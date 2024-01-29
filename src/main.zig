@@ -1,7 +1,11 @@
 const std = @import("std");
 const universal_lambda = @import("universal_lambda_handler");
-const helper = @import("universal_lambda_helpers");
+const universal_lambda_interface = @import("universal_lambda_interface");
+const universal_lambda_options = @import("universal_lambda_build_options");
 const signing = @import("aws-signing");
+const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
+
+const log = std.log.scoped(.dynamodb);
 
 pub const std_options = struct {
     pub const log_scope_levels = &[_]std.log.ScopeLevel{.{ .scope = .aws_signing, .level = .info }};
@@ -11,42 +15,107 @@ pub fn main() !u8 {
     return try universal_lambda.run(null, handler);
 }
 
-var test_credential: signing.Credentials = undefined;
-pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: universal_lambda.Context) ![]const u8 {
+pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: universal_lambda_interface.Context) ![]const u8 {
     const access_key = try allocator.dupe(u8, "ACCESS");
     const secret_key = try allocator.dupe(u8, "SECRET");
     test_credential = signing.Credentials.init(allocator, access_key, secret_key, null);
     defer test_credential.deinit();
-
-    var headers = try helper.allHeaders(allocator, context);
-    defer headers.deinit();
     var fis = std.io.fixedBufferStream(event_data);
-    var request = signing.UnverifiedRequest{
-        .method = std.http.Method.PUT,
-        .target = try helper.findTarget(allocator, context),
-        .headers = headers.http_headers.*,
-    };
 
-    const auth_bypass =
-        @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
-    const is_authenticated = auth_bypass or
-        try signing.verify(allocator, request, fis.reader(), getCreds);
-    // Universal lambda should check these and convert them to http
-    if (!is_authenticated) return error.Unauthenticated;
+    try authenticateUser(allocator, context, context.request.target, context.request.headers, fis.reader());
+    try setContentType(&context.headers, "application/x-amz-json-1.0", false);
     // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html#API_CreateTable_Examples
     // Operation is in X-Amz-Target
     // event_data is json
     // X-Amz-Target: DynamoDB_20120810.CreateTable
-    const target_value = headers.http_headers.getFirstValue("X-Amz-Target").?;
-    const operation = target_value[std.mem.lastIndexOf(u8, target_value, ".").? + 1 ..];
-    const account_id = try accountId(allocator, headers.http_headers.*);
+    const target_value_or_null = context.request.headers.getFirstValue("X-Amz-Target");
+    const target_value = if (target_value_or_null) |t| t else {
+        context.status = .bad_request;
+        context.reason = "Missing X-Amz-Target header";
+        return error.XAmzTargetHeaderMissing;
+    };
+    const operation_or_null = std.mem.lastIndexOf(u8, target_value, ".");
+    const operation = if (operation_or_null) |o| target_value[o + 1 ..] else {
+        context.status = .bad_request;
+        context.reason = "Missing operation in X-Amz-Target";
+        return error.XAmzTargetHeaderMalformed;
+    };
+    var authenticated_request = AuthenticatedRequest{
+        .allocator = allocator,
+        .event_data = event_data,
+        .account_id = try accountId(allocator, context.request.headers),
+        .status = context.status,
+        .reason = context.reason,
+        .headers = context.request.headers,
+        .output_format = switch (universal_lambda_options.build_type) {
+            // This may seem to be dumb, but we want to be cognizant of
+            // any new platforms and explicitly consider them
+            .awslambda, .standalone_server, .cloudflare, .flexilib => .json,
+            .exe_run => .text,
+        },
+    };
+
+    const writer = context.writer();
     if (std.ascii.eqlIgnoreCase("CreateTable", operation))
-        return @import("createtable.zig").handler(allocator, account_id, event_data);
-    try std.io.getStdErr().writer().print("Operation '{s}' unsupported\n", .{operation});
+        return executeOperation(&authenticated_request, context, writer, @import("createtable.zig").handler);
+
+    try writer.print("Operation '{s}' unsupported\n", .{operation});
+    context.status = .bad_request;
     return error.OperationUnsupported;
+}
+fn setContentType(headers: *std.http.Headers, content_type: []const u8, overwrite: bool) !void {
+    if (headers.contains("content-type")) {
+        if (!overwrite) return;
+        _ = headers.delete("content-type");
+    }
+    try headers.append("Content-Type", content_type);
+}
+fn executeOperation(
+    request: *AuthenticatedRequest,
+    context: universal_lambda_interface.Context,
+    writer: anytype,
+    operation: fn (*AuthenticatedRequest, anytype) anyerror![]const u8,
+) ![]const u8 {
+    return operation(request, writer) catch |err| {
+        context.status = request.status;
+        context.reason = request.reason;
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+        return err;
+    };
+}
+fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_interface.Context, target: []const u8, headers: std.http.Headers, body_reader: anytype) !void {
+    var request = signing.UnverifiedRequest{
+        .method = std.http.Method.PUT,
+        .target = target,
+        .headers = headers,
+    };
+    const auth_bypass =
+        @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
+    const is_authenticated = auth_bypass or
+        signing.verify(allocator, request, body_reader, getCreds) catch |err| {
+        if (std.mem.eql(u8, "AuthorizationHeaderMissing", @errorName(err))) {
+            context.status = .unauthorized;
+            return error.Unauthenticated;
+        }
+        log.err("Caught error on signature verifcation: {any}", .{err});
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+
+        context.status = .unauthorized;
+        return error.Unauthenticated;
+    };
+    // Universal lambda should check these and convert them to http
+    if (!is_authenticated) {
+        context.status = .unauthorized;
+        return error.Unauthenticated;
+    }
 }
 
 // TODO: Get hook these functions up to IAM for great good
+var test_credential: signing.Credentials = undefined;
 fn getCreds(access: []const u8) ?signing.Credentials {
     if (std.mem.eql(u8, access, "ACCESS")) return test_credential;
     return null;
