@@ -3,7 +3,8 @@ const sqlite = @import("sqlite");
 const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
-pub var data_dir: []const u8 = "";
+const returnException = @import("main.zig").returnException;
+const ddb_types = @import("ddb_types.zig");
 
 // These are in the original casing so as to make the error messages nice
 const RequiredFields = enum(u3) {
@@ -14,38 +15,8 @@ const RequiredFields = enum(u3) {
     // zig fmt: on
 };
 
-const AttributeTypeDescriptor = enum(u4) {
-    S = 0,
-    N = 1,
-    B = 2,
-    BOOL = 3,
-    NULL = 4,
-    M = 5,
-    L = 6,
-    SS = 7,
-    NS = 8,
-    BS = 9,
-};
-
-const AttributeTypeName = enum(4) {
-    String = 0,
-    Number = 1,
-    Binary = 2,
-    Boolean = 3,
-    Null = 4,
-    Map = 5,
-    List = 6,
-    StringSet = 7,
-    NumberSet = 8,
-    BinarySet = 9,
-};
-
-const AttributeDefinition = struct {
-    name: []const u8,
-    type: AttributeTypeDescriptor,
-};
 const TableInfo = struct {
-    attribute_definitions: []*AttributeDefinition,
+    attribute_definitions: []*ddb_types.AttributeDefinition,
     // gsi_list: []const u8, // Not sure how this is used
     // gsi_description_list: []const u8, // Not sure how this is used
     // sqlite_index: []const u8, // Not sure how this is used
@@ -73,7 +44,7 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
         }
         allocator.free(request_params.table_info.attribute_definitions);
     }
-    var db = try dbForAccount(allocator, account_id);
+    var db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
     // TODO: better to do all encryption when request params are parsed?
@@ -242,46 +213,6 @@ fn insertIntoDm(
         if (billing_mode_pay_per_request) @as(usize, 1) else @as(usize, 0),
         @as(usize, 0),
     });
-}
-/// Gets the database for this account. If under test, a memory database is used
-/// instead. Will initialize the database with appropriate metadata tables
-fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlite.Db {
-    // TODO: Need to move this function somewhere central
-    // TODO: Need configuration for what directory to use
-    // TODO: Should this be a pool, and if so, how would we know when to close?
-    const file_without_path = try std.fmt.allocPrint(allocator, "ddb-{s}.sqlite3", .{account_id});
-    defer allocator.free(file_without_path);
-    const db_file_name = try std.fs.path.joinZ(allocator, &[_][]const u8{ data_dir, file_without_path });
-    defer allocator.free(db_file_name);
-    const mode = if (@import("builtin").is_test) sqlite.Db.Mode.Memory else sqlite.Db.Mode{ .File = db_file_name };
-    const new = mode == .Memory or (std.fs.cwd().statFile(file_without_path) catch null == null);
-    var db = try sqlite.Db.init(.{
-        .mode = mode,
-        .open_flags = .{
-            .write = true,
-            .create = new,
-        },
-        .threading_mode = .MultiThread,
-    });
-
-    // DDB minimum table name length is 3. DDB local creates this table with metadata
-    // This of course is only if the database is first run
-    if (new)
-        try db.exec(
-            \\CREATE TABLE dm (
-            \\    TableName TEXT,
-            \\    CreationDateTime INTEGER,
-            \\    LastDecreaseDate INTEGER,
-            \\    LastIncreaseDate INTEGER,
-            \\    NumberOfDecreasesToday INTEGER,
-            \\    ReadCapacityUnits INTEGER,
-            \\    WriteCapacityUnits INTEGER,
-            \\    TableInfo BLOB,
-            \\    BillingMode INTEGER DEFAULT 0,
-            \\    PayPerRequestDateTime INTEGER DEFAULT 0,
-            \\    PRIMARY KEY(TableName))
-        , .{}, .{});
-    return db;
 }
 
 fn parseRequest(
@@ -499,9 +430,9 @@ fn parseRequest(
     return request_params;
 }
 
-fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.json.Value, writer: anytype) ![]*AttributeDefinition {
+fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.json.Value, writer: anytype) ![]*ddb_types.AttributeDefinition {
     const allocator = request.allocator;
-    var rc = try allocator.alloc(*AttributeDefinition, definitions.len);
+    var rc = try allocator.alloc(*ddb_types.AttributeDefinition, definitions.len);
     errdefer allocator.free(rc);
     //  "AttributeDefinitions": [
     //     {
@@ -533,7 +464,7 @@ fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.
                 "Attribute definitions array can only consist of objects with AttributeName and AttributeType strings",
             );
         const type_string = attribute_type.?.string;
-        const type_enum = std.meta.stringToEnum(AttributeTypeDescriptor, type_string);
+        const type_enum = std.meta.stringToEnum(ddb_types.AttributeTypeDescriptor, type_string);
         if (type_enum == null)
             try returnException(
                 request,
@@ -544,34 +475,12 @@ fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.
             ); // TODO: This is kind of a lousy error message
         // TODO: This can leak memory if a later validation error occurs.
         // we are de-facto passed an arena here, but we shouldn't assume that
-        var definition = try allocator.create(AttributeDefinition);
+        var definition = try allocator.create(ddb_types.AttributeDefinition);
         definition.name = try allocator.dupe(u8, name.?.string);
         definition.type = type_enum.?;
         rc[i] = definition;
     }
     return rc;
-}
-fn returnException(
-    request: *AuthenticatedRequest,
-    status: std.http.Status,
-    err: anyerror,
-    writer: anytype,
-    message: []const u8,
-) !void {
-    switch (request.output_format) {
-        .json => try writer.print(
-            \\{{"__type":"{s}","message":"{s}"}}
-        ,
-            .{ @errorName(err), message },
-        ),
-
-        .text => try writer.print(
-            "{s}: {s}\n",
-            .{ @errorName(err), message },
-        ),
-    }
-    request.status = status;
-    return err;
 }
 // Full request syntax:
 //

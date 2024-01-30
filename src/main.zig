@@ -58,6 +58,10 @@ pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: un
     const writer = context.writer();
     if (std.ascii.eqlIgnoreCase("CreateTable", operation))
         return executeOperation(&authenticated_request, context, writer, @import("createtable.zig").handler);
+    if (std.ascii.eqlIgnoreCase("BatchWriteItem", operation))
+        return executeOperation(&authenticated_request, context, writer, @import("batchwriteitem.zig").handler);
+    if (std.ascii.eqlIgnoreCase("BatchGetItem", operation))
+        return executeOperation(&authenticated_request, context, writer, @import("batchgetitem.zig").handler);
 
     try writer.print("Operation '{s}' unsupported\n", .{operation});
     context.status = .bad_request;
@@ -140,6 +144,29 @@ fn accountId(allocator: std.mem.Allocator, headers: std.http.Headers) ![]const u
     return try iamAccountId(allocator);
 }
 
+pub fn returnException(
+    request: *AuthenticatedRequest,
+    status: std.http.Status,
+    err: anyerror,
+    writer: anytype,
+    message: []const u8,
+) !void {
+    switch (request.output_format) {
+        .json => try writer.print(
+            \\{{"__type":"{s}","message":"{s}"}}
+        ,
+            .{ @errorName(err), message },
+        ),
+
+        .text => try writer.print(
+            "{s}: {s}\n",
+            .{ @errorName(err), message },
+        ),
+    }
+    request.status = status;
+    return err;
+}
+
 // These never need to be freed because we will need them throughout the program
 var iam_account_id: ?[]const u8 = null;
 var iam_access_key: ?[]const u8 = null;
@@ -167,4 +194,6 @@ fn getVariable(allocator: std.mem.Allocator, global: *?[]const u8, env_var_name:
 
 test {
     std.testing.refAllDecls(@import("createtable.zig"));
+    std.testing.refAllDecls(@import("batchwriteitem.zig"));
+    std.testing.refAllDecls(@import("batchgetitem.zig"));
 }
