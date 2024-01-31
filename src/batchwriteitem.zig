@@ -507,6 +507,40 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     // TODO: Capacity limiting and metrics
 }
 
+test "basic request parsing failure" {
+    const allocator = std.testing.allocator;
+    var request = AuthenticatedRequest{
+        .output_format = .text,
+        .event_data =
+        \\ {
+        \\    "RequestItems": {
+        \\        "Forum": [
+        \\            {
+        \\                "PutRequest": {
+        \\                    "Item": {
+        \\                        "Name": {
+        \\                            "BS": ["Amazon DynamoDB"]
+        \\                        }
+        \\                    }
+        \\                }
+        \\            }
+        \\        ]
+        \\ }
+        \\ }
+        ,
+        .headers = undefined,
+        .status = .ok,
+        .reason = "",
+        .account_id = "1234",
+        .allocator = allocator,
+    };
+    var al = std.ArrayList(u8).init(allocator);
+    defer al.deinit();
+    var writer = al.writer();
+    var parms = try Params.parseRequest(allocator, &request, writer);
+    defer parms.deinit();
+    try std.testing.expectError(error.InvalidPadding, parms.validate());
+}
 test "basic request parsing" {
     const allocator = std.testing.allocator;
     var request = AuthenticatedRequest{
