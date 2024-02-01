@@ -505,6 +505,7 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     //    3. Delete any existing records with that hash value (for delete requests, we're done here)
     //    4. If put request, put the new item in the table (with encrypted values, using table encryption)
     // TODO: Capacity limiting and metrics
+    return "hi";
 }
 
 test "basic request parsing failure" {

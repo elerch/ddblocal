@@ -14,4 +14,5 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, request.event_data, .{});
     defer parsed.deinit();
     // const request_params = try parseRequest(request, parsed, writer);
+    return "hi";
 }

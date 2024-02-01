@@ -4,6 +4,7 @@ const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
 const returnException = @import("main.zig").returnException;
+const ddb = @import("ddb.zig");
 const ddb_types = @import("ddb_types.zig");
 
 // These are in the original casing so as to make the error messages nice
@@ -15,17 +16,9 @@ const RequiredFields = enum(u3) {
     // zig fmt: on
 };
 
-const TableInfo = struct {
-    attribute_definitions: []*ddb_types.AttributeDefinition,
-    // gsi_list: []const u8, // Not sure how this is used
-    // gsi_description_list: []const u8, // Not sure how this is used
-    // sqlite_index: []const u8, // Not sure how this is used
-    table_key: [encryption.encoded_key_length]u8,
-};
-
 const Params = struct {
     table_name: []const u8,
-    table_info: TableInfo,
+    table_info: ddb_types.TableInfo,
     read_capacity_units: ?i64 = null,
     write_capacity_units: ?i64 = null,
     billing_mode_pay_per_request: bool = false,
@@ -47,23 +40,18 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     var db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
-    // TODO: better to do all encryption when request params are parsed?
-    const table_name = try encryption.encryptAndEncode(allocator, account.root_account_key.*, request_params.table_name);
-    defer allocator.free(table_name);
-    // We'll json serialize our table_info structure, encrypt, encode, and plow in
-    const table_info_string = try std.json.stringifyAlloc(allocator, request_params.table_info, .{ .whitespace = .indent_2 });
-    defer allocator.free(table_info_string);
-    const table_info = try encryption.encryptAndEncode(allocator, account.root_account_key.*, table_info_string);
-    defer allocator.free(table_info);
 
-    try insertIntoDm(
+    try ddb.createDdbTable(
+        allocator,
         &db,
-        table_name,
-        table_info,
+        account,
+        request_params.table_name,
+        request_params.table_info,
         request_params.read_capacity_units orelse 0,
         request_params.write_capacity_units orelse 0,
         request_params.billing_mode_pay_per_request,
     );
+
     // Server side Input validation error on live DDB results in this for a 2 char table name
     // 400 - bad request
     // {"__type":"com.amazon.coral.validate#ValidationException","message":"TableName must be at least 3 characters long and at most 255 characters long"}
@@ -127,92 +115,11 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     //   "UniqueGSIIndexes": []
     // }
     //
-    var diags = sqlite.Diagnostics{};
-
-    // It doesn't seem that I can bind a variable here. But it actually doesn't matter as we're
-    // encoding the name...
-    // IF NOT EXISTS doesn't apply - we want this to bounce if the table exists
-    const create_stmt = try std.fmt.allocPrint(allocator,
-        \\CREATE TABLE '{s}' (
-        \\    hashKey TEXT DEFAULT NULL,
-        \\    rangeKey TEXT DEFAULT NULL,
-        \\    hashValue BLOB NOT NULL,
-        \\    rangeValue BLOB NOT NULL,
-        \\    itemSize INTEGER DEFAULT 0,
-        \\    ObjectJSON BLOB NOT NULL,
-        \\    PRIMARY KEY(hashKey, rangeKey)
-        \\)
-    , .{table_name});
-    defer allocator.free(create_stmt);
-    // db.exec requires a comptime statement. execDynamic does not
-    db.execDynamic(
-        create_stmt,
-        .{ .diags = &diags },
-        .{},
-    ) catch |e| {
-        std.log.debug("SqlLite Diags: {}", .{diags});
-        return e;
-    };
-    const create_index_stmt = try std.fmt.allocPrint(
-        allocator,
-        "CREATE INDEX \"{s}*HVI\" ON \"{s}\" (hashValue)",
-        .{ table_name, table_name },
-    );
-    defer allocator.free(create_index_stmt);
-    try db.execDynamic(create_index_stmt, .{}, .{});
 
     var al = std.ArrayList(u8).init(allocator);
     var response_writer = al.writer();
     try response_writer.print("table created for account {s}\n", .{account_id});
     return al.toOwnedSlice();
-}
-
-fn insertIntoDm(
-    db: *sqlite.Db,
-    table_name: []const u8,
-    table_info: []const u8,
-    read_capacity_units: i64,
-    write_capacity_units: i64,
-    billing_mode_pay_per_request: bool,
-) !void {
-    // const current_time = std.time.nanotimestamp();
-    const current_time = std.time.microTimestamp(); // SQLlite integers are only 64bit max
-    try db.exec(
-        \\INSERT INTO dm(
-        \\  TableName,
-        \\  CreationDateTime,
-        \\  LastDecreaseDate,
-        \\  LastIncreaseDate,
-        \\  NumberOfDecreasesToday,
-        \\  ReadCapacityUnits,
-        \\  WriteCapacityUnits,
-        \\  TableInfo,
-        \\  BillingMode,
-        \\  PayPerRequestDateTime
-        \\  ) VALUES (
-        \\  $tablename{[]const u8},
-        \\  $createdate{i64},
-        \\  $lastdecreasedate{usize},
-        \\  $lastincreasedate{usize},
-        \\  $numberofdecreasestoday{usize},
-        \\  $readcapacityunits{i64},
-        \\  $writecapacityunits{i64},
-        \\  $tableinfo{[]const u8},
-        \\  $billingmode{usize},
-        \\  $payperrequestdatetime{usize}
-        \\  )
-    , .{}, .{
-        table_name,
-        current_time,
-        @as(usize, 0),
-        @as(usize, 0),
-        @as(usize, 0),
-        read_capacity_units,
-        write_capacity_units,
-        table_info,
-        if (billing_mode_pay_per_request) @as(usize, 1) else @as(usize, 0),
-        @as(usize, 0),
-    });
 }
 
 fn parseRequest(
@@ -273,7 +180,7 @@ fn parseRequest(
     errdefer {
         if (attribute_definitions_assigned) {
             for (request_params.table_info.attribute_definitions) |d| {
-                request.allocator.free(d.*.name);
+                request.allocator.free(d.name);
                 request.allocator.destroy(d);
             }
             request.allocator.free(request_params.table_info.attribute_definitions);
