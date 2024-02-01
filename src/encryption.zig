@@ -118,6 +118,17 @@ pub fn decrypt(allocator: std.mem.Allocator, key: [key_length]u8, ciphertext: []
     return plaintext;
 }
 
+/// Decrypts encoded data. Does the reverse of encryptAndEncode
+/// Caller owns memory
+pub fn decodeAndDecrypt(allocator: std.mem.Allocator, key: [key_length]u8, encoded_ciphertext: []const u8) ![]const u8 {
+    const Decoder = std.base64.standard.Decoder;
+    const ciphertext_len = try Decoder.calcSizeForSlice(encoded_ciphertext);
+    var ciphertext = try allocator.alloc(u8, ciphertext_len);
+    defer allocator.free(ciphertext);
+    try std.base64.standard.Decoder.decode(ciphertext, encoded_ciphertext);
+    return try decrypt(allocator, key, ciphertext);
+}
+
 // This is a pretty long running test...
 // test "can encrypt and decrypt data with simpler api" {
 //     const allocator = std.testing.allocator;
