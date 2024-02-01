@@ -1,3 +1,5 @@
+const encryption = @import("encryption.zig");
+
 pub const AttributeTypeDescriptor = enum(u4) {
     S = 0,
     N = 1,
@@ -27,4 +29,12 @@ pub const AttributeTypeName = enum(u4) {
 pub const AttributeDefinition = struct {
     name: []const u8,
     type: AttributeTypeDescriptor,
+};
+
+pub const TableInfo = struct {
+    attribute_definitions: []*const AttributeDefinition,
+    // gsi_list: []const u8, // Not sure how this is used
+    // gsi_description_list: []const u8, // Not sure how this is used
+    // sqlite_index: []const u8, // Not sure how this is used
+    table_key: [encryption.encoded_key_length]u8,
 };
