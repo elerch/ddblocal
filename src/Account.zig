@@ -29,10 +29,15 @@ pub fn deinit(self: Self) void {
 }
 
 pub var data_dir: []const u8 = "";
+pub var test_retain_db: bool = false;
+var test_db: ?sqlite.Db = null;
 
 /// Gets the database for this account. If under test, a memory database is used
 /// instead. Will initialize the database with appropriate metadata tables
 pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlite.Db {
+    const builtin = @import("builtin");
+    if (builtin.is_test and test_retain_db)
+        if (test_db) |db| return db;
     // TODO: Need to move this function somewhere central
     // TODO: Need configuration for what directory to use
     // TODO: Should this be a pool, and if so, how would we know when to close?
@@ -40,7 +45,7 @@ pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlit
     defer allocator.free(file_without_path);
     const db_file_name = try std.fs.path.joinZ(allocator, &[_][]const u8{ data_dir, file_without_path });
     defer allocator.free(db_file_name);
-    const mode = if (@import("builtin").is_test) sqlite.Db.Mode.Memory else sqlite.Db.Mode{ .File = db_file_name };
+    const mode = if (builtin.is_test) sqlite.Db.Mode.Memory else sqlite.Db.Mode{ .File = db_file_name };
     const new = mode == .Memory or (std.fs.cwd().statFile(file_without_path) catch null == null);
     var db = try sqlite.Db.init(.{
         .mode = mode,
@@ -68,5 +73,6 @@ pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlit
             \\    PayPerRequestDateTime INTEGER DEFAULT 0,
             \\    PRIMARY KEY(TableName))
         , .{}, .{});
+    if (builtin.is_test and test_retain_db) test_db = db;
     return db;
 }
