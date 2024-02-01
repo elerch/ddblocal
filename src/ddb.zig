@@ -2,9 +2,54 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
-const ddb_types = @import("ddb_types.zig");
 const encryption = @import("encryption.zig");
 const builtin = @import("builtin");
+
+/// Serialized into metadata table. This is an explicit enum with a twin
+/// AttributeTypeName enum to make coding with these types easier. Use
+/// Descriptor for storage or communication with the outside world, and
+/// Name for internal use
+pub const AttributeTypeDescriptor = enum(u4) {
+    S = 0,
+    N = 1,
+    B = 2,
+    BOOL = 3,
+    NULL = 4,
+    M = 5,
+    L = 6,
+    SS = 7,
+    NS = 8,
+    BS = 9,
+};
+
+pub const AttributeTypeName = enum(u4) {
+    string = 0,
+    number = 1,
+    binary = 2,
+    boolean = 3,
+    null = 4,
+    map = 5,
+    list = 6,
+    string_set = 7,
+    number_set = 8,
+    binary_set = 9,
+};
+
+/// Serialized into metadata table
+pub const AttributeDefinition = struct {
+    name: []const u8,
+    type: AttributeTypeDescriptor,
+};
+
+/// TableInfo is serialized directly into the underlying metadata table, along
+/// with AttributeDefinition structure and types
+pub const TableInfo = struct {
+    attribute_definitions: []*const AttributeDefinition,
+    // gsi_list: []const u8, // Not sure how this is used
+    // gsi_description_list: []const u8, // Not sure how this is used
+    // sqlite_index: []const u8, // Not sure how this is used
+    table_key: [encryption.encoded_key_length]u8,
+};
 
 pub const TableArray = struct {
     items: []Table,
@@ -73,7 +118,7 @@ pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: []const u8) !T
         );
         defer allocator.free(table_info_str);
         // std.debug.print(" \n===TableInfo: {s}\n===\n", .{table_info_str});
-        const table_info = try std.json.parseFromSlice(ddb_types.TableInfo, allocator, table_info_str, .{});
+        const table_info = try std.json.parseFromSlice(TableInfo, allocator, table_info_str, .{});
         defer table_info.deinit();
         // errdefer allocator.free(table_info.table_key);
         // defer {
@@ -101,7 +146,7 @@ pub fn createDdbTable(
     db: *sqlite.Db,
     account: Account,
     table_name: []const u8,
-    table_info: ddb_types.TableInfo,
+    table_info: TableInfo,
     read_capacity_units: i64,
     write_capacity_units: i64,
     billing_mode_pay_per_request: bool,
@@ -160,7 +205,7 @@ fn insertIntoDatabaseMetadata(
     db: *sqlite.Db,
     account: Account,
     table_name: []const u8,
-    table_info: ddb_types.TableInfo,
+    table_info: TableInfo,
     read_capacity_units: i64,
     write_capacity_units: i64,
     billing_mode_pay_per_request: bool,
@@ -229,13 +274,13 @@ fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !sqlite
     var db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
-    var hash = ddb_types.AttributeDefinition{ .name = "Artist", .type = .S };
-    var range = ddb_types.AttributeDefinition{ .name = "SongTitle", .type = .S };
-    var definitions = @constCast(&[_]*ddb_types.AttributeDefinition{
+    var hash = AttributeDefinition{ .name = "Artist", .type = .S };
+    var range = AttributeDefinition{ .name = "SongTitle", .type = .S };
+    var definitions = @constCast(&[_]*AttributeDefinition{
         &hash,
         &range,
     });
-    var table_info: ddb_types.TableInfo = .{
+    var table_info: TableInfo = .{
         .table_key = undefined,
         .attribute_definitions = definitions[0..],
     };

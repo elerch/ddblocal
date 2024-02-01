@@ -3,7 +3,7 @@ const sqlite = @import("sqlite");
 const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
-const ddb_types = @import("ddb_types.zig");
+const ddb = @import("ddb.zig");
 const returnException = @import("main.zig").returnException;
 
 // Copied from ddb_type and made inferred. Yuck :(
@@ -21,7 +21,7 @@ pub const AttributeTypeName = enum {
 };
 
 // Cannot use AttributeTypeName enum as it is not inferred
-// const AttributeValue = union(ddb_types.AttributeTypeName) {
+// const AttributeValue = union(ddb.AttributeTypeName) {
 const AttributeValue = union(AttributeTypeName) {
     string: []const u8,
     number: []const u8, // Floating point stored as string
@@ -393,7 +393,7 @@ const Params = struct {
             const attribute_type = val_val.key_ptr.*; // This should be "S", "N", "NULL", "BOOL", etc
             const attribute_value = val_val.value_ptr.*;
             // Convert this to our enum
-            const attribute_type_enum = std.meta.stringToEnum(ddb_types.AttributeTypeDescriptor, attribute_type);
+            const attribute_type_enum = std.meta.stringToEnum(ddb.AttributeTypeDescriptor, attribute_type);
             if (attribute_type_enum == null)
                 try returnException(
                     request,
@@ -403,7 +403,7 @@ const Params = struct {
                     "Request in RequestItems found attribute with invalid type",
                 );
             // Convert our enum to something that looks better when reading code
-            const attribute_type_enum_converted = @as(ddb_types.AttributeTypeName, @enumFromInt(@intFromEnum(attribute_type_enum.?)));
+            const attribute_type_enum_converted = @as(ddb.AttributeTypeName, @enumFromInt(@intFromEnum(attribute_type_enum.?)));
             // Now we need to get *THIS* enum over to our union, which uses the same values
             // We'll just use a switch here, because each of these cases must
             // be handled slightly differently

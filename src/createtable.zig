@@ -5,7 +5,6 @@ const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
 const returnException = @import("main.zig").returnException;
 const ddb = @import("ddb.zig");
-const ddb_types = @import("ddb_types.zig");
 
 // These are in the original casing so as to make the error messages nice
 const RequiredFields = enum(u3) {
@@ -18,7 +17,7 @@ const RequiredFields = enum(u3) {
 
 const Params = struct {
     table_name: []const u8,
-    table_info: ddb_types.TableInfo,
+    table_info: ddb.TableInfo,
     read_capacity_units: ?i64 = null,
     write_capacity_units: ?i64 = null,
     billing_mode_pay_per_request: bool = false,
@@ -337,9 +336,9 @@ fn parseRequest(
     return request_params;
 }
 
-fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.json.Value, writer: anytype) ![]*ddb_types.AttributeDefinition {
+fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.json.Value, writer: anytype) ![]*ddb.AttributeDefinition {
     const allocator = request.allocator;
-    var rc = try allocator.alloc(*ddb_types.AttributeDefinition, definitions.len);
+    var rc = try allocator.alloc(*ddb.AttributeDefinition, definitions.len);
     errdefer allocator.free(rc);
     //  "AttributeDefinitions": [
     //     {
@@ -371,7 +370,7 @@ fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.
                 "Attribute definitions array can only consist of objects with AttributeName and AttributeType strings",
             );
         const type_string = attribute_type.?.string;
-        const type_enum = std.meta.stringToEnum(ddb_types.AttributeTypeDescriptor, type_string);
+        const type_enum = std.meta.stringToEnum(ddb.AttributeTypeDescriptor, type_string);
         if (type_enum == null)
             try returnException(
                 request,
@@ -382,7 +381,7 @@ fn parseAttributeDefinitions(request: *AuthenticatedRequest, definitions: []std.
             ); // TODO: This is kind of a lousy error message
         // TODO: This can leak memory if a later validation error occurs.
         // we are de-facto passed an arena here, but we shouldn't assume that
-        var definition = try allocator.create(ddb_types.AttributeDefinition);
+        var definition = try allocator.create(ddb.AttributeDefinition);
         definition.name = try allocator.dupe(u8, name.?.string);
         definition.type = type_enum.?;
         rc[i] = definition;
