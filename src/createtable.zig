@@ -1,5 +1,4 @@
 const std = @import("std");
-const sqlite = @import("sqlite");
 const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
@@ -26,6 +25,11 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     const allocator = request.allocator;
     const account_id = request.account_id;
 
+    // NOTE: Please do not use this as an example. Check out batchwriteitem for
+    // much better code, which was developed later. Most of the work in the
+    // handler here is to parse and validate the incoming JSON data. From
+    // there, the interface to the underlying data storage is handled by
+    // ddb.zig
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, request.event_data, .{});
     defer parsed.deinit();
     const request_params = try parseRequest(request, parsed, writer);
