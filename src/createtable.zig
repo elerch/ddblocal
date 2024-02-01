@@ -29,6 +29,27 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, request.event_data, .{});
     defer parsed.deinit();
     const request_params = try parseRequest(request, parsed, writer);
+    // Parsing does most validation for us, but we also need to make sure that
+    // the attributes specified in the key schema actually exist
+    var found_keys: u2 = if (request_params.table_info.range_key_attribute_name == null) 0b01 else 0b00;
+    for (request_params.table_info.attribute_definitions) |def| {
+        if (std.mem.eql(u8, def.name, request_params.table_info.hash_key_attribute_name)) {
+            found_keys |= 0b10;
+            continue;
+        }
+        if (request_params.table_info.range_key_attribute_name) |n| {
+            if (std.mem.eql(u8, def.name, n))
+                found_keys |= 0b01;
+        }
+    }
+    if (found_keys != 0b11)
+        try returnException(
+            request,
+            .bad_request,
+            error.ValidationException,
+            writer,
+            "Attribute names in KeySchema must also exist in AttributeDefinitions",
+        );
     defer {
         for (request_params.table_info.attribute_definitions) |d| {
             allocator.free(d.*.name);
@@ -133,6 +154,8 @@ fn parseRequest(
         .table_info = .{
             .attribute_definitions = undefined,
             .table_key = undefined,
+            .hash_key_attribute_name = undefined,
+            .range_key_attribute_name = null,
         },
     };
     // This is a new table, so we will generate a random key for table data
@@ -233,13 +256,60 @@ fn parseRequest(
                     writer,
                     "KeySchema must be an array",
                 );
-            if (val.array.items.len == 0)
+            if (val.array.items.len < 1 or val.array.items.len > 2)
                 try returnException(
                     request,
                     .bad_request,
                     error.ValidationException,
                     writer,
-                    "KeySchema array cannot be empty",
+                    "KeySchema array must consist of only 1 or 2 elements",
+                );
+            var found_hash = false;
+            for (val.array.items) |item| {
+                //     {
+                //       "AttributeName": "Artist",
+                //       "KeyType": "HASH"
+                //     },
+                if (item != .object)
+                    try returnException(
+                        request,
+                        .bad_request,
+                        error.ValidationException,
+                        writer,
+                        "KeySchemaElement must be an object",
+                    );
+                const attribute_name = item.object.get("AttributeName");
+                const key_type = item.object.get("KeyType");
+                if (attribute_name == null or key_type == null or attribute_name.? != .string or key_type.? != .string)
+                    try returnException(
+                        request,
+                        .bad_request,
+                        error.ValidationException,
+                        writer,
+                        "KeySchemaElement must contain AttributeName and KeyType strings",
+                    );
+                if (!std.mem.eql(u8, key_type.?.string, "HASH") and !std.mem.eql(u8, key_type.?.string, "RANGE"))
+                    try returnException(
+                        request,
+                        .bad_request,
+                        error.ValidationException,
+                        writer,
+                        "Invalid KeyType. Valid values are HASH | RANGE",
+                    );
+                const is_hash = std.mem.eql(u8, key_type.?.string, "HASH");
+                found_hash = found_hash or is_hash;
+                if (is_hash)
+                    request_params.table_info.hash_key_attribute_name = attribute_name.?.string
+                else
+                    request_params.table_info.range_key_attribute_name = attribute_name.?.string;
+            }
+            if (!found_hash)
+                try returnException(
+                    request,
+                    .bad_request,
+                    error.ValidationException,
+                    writer,
+                    "KeySchema missing hash key",
                 );
             continue;
         }

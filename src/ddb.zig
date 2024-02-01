@@ -53,6 +53,11 @@ pub const TableInfo = struct {
     // gsi_description_list: []const u8, // Not sure how this is used
     // sqlite_index: []const u8, // Not sure how this is used
     table_key: [encryption.encoded_key_length]u8,
+
+    // DDB Local is using sqlite_index here, which seems very much overkill
+    // as everything can be determined by just the name...
+    hash_key_attribute_name: []const u8,
+    range_key_attribute_name: ?[]const u8,
 };
 
 pub const TableArray = struct {
@@ -287,6 +292,8 @@ fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !sqlite
     var table_info: TableInfo = .{
         .table_key = undefined,
         .attribute_definitions = definitions[0..],
+        .hash_key_attribute_name = "Artist",
+        .range_key_attribute_name = null,
     };
     encryption.randomEncodedKey(&table_info.table_key);
     try createDdbTable(
