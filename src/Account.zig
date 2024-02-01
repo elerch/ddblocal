@@ -24,6 +24,7 @@ pub fn accountForId(allocator: std.mem.Allocator, account_id: []const u8) !Self 
 }
 
 pub fn deinit(self: Self) void {
+    std.crypto.utils.secureZero(u8, self.root_account_key);
     self.allocator.free(self.root_account_key);
 }
 
