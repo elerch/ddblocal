@@ -6,23 +6,7 @@ const encryption = @import("encryption.zig");
 const ddb = @import("ddb.zig");
 const returnException = @import("main.zig").returnException;
 
-// Copied from ddb_type and made inferred. Yuck :(
-pub const AttributeTypeName = enum {
-    string,
-    number,
-    binary,
-    boolean,
-    null,
-    map,
-    list,
-    string_set,
-    number_set,
-    binary_set,
-};
-
-// Cannot use AttributeTypeName enum as it is not inferred
-// const AttributeValue = union(ddb.AttributeTypeName) {
-const AttributeValue = union(AttributeTypeName) {
+const AttributeValue = union(ddb.AttributeTypeName) {
     string: []const u8,
     number: []const u8, // Floating point stored as string
     binary: []const u8, // Base64-encoded binary data object
@@ -402,13 +386,11 @@ const Params = struct {
                     writer,
                     "Request in RequestItems found attribute with invalid type",
                 );
-            // Convert our enum to something that looks better when reading code
-            const attribute_type_enum_converted = @as(ddb.AttributeTypeName, @enumFromInt(@intFromEnum(attribute_type_enum.?)));
             // Now we need to get *THIS* enum over to our union, which uses the same values
             // We'll just use a switch here, because each of these cases must
             // be handled slightly differently
             var final_attribute_value: AttributeValue = undefined;
-            switch (attribute_type_enum_converted) {
+            switch (attribute_type_enum.?.toAttributeTypeName()) {
                 .string => {
                     try expectType(attribute_value, .string, request, writer);
                     final_attribute_value = .{ .string = attribute_value.string };

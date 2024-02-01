@@ -20,6 +20,10 @@ pub const AttributeTypeDescriptor = enum(u4) {
     SS = 7,
     NS = 8,
     BS = 9,
+
+    pub fn toAttributeTypeName(self: AttributeTypeDescriptor) AttributeTypeName {
+        return @as(AttributeTypeName, @enumFromInt(@intFromEnum(self)));
+    }
 };
 
 pub const AttributeTypeName = enum(u4) {
