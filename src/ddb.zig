@@ -5,6 +5,17 @@ const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
 const builtin = @import("builtin");
 
+// We need our enryption to be able to store/retrieve and otherwise work like
+// a database. So the use of a nonce here defeats these use cases
+const nonce = &[_]u8{
+    0x55, 0x4a, 0x38, 0x16, 0x55, 0x55, 0x2d, 0x05,
+    0x32, 0x70, 0x3f, 0xa0, 0xde, 0x3d, 0x2c, 0xb8,
+    0x89, 0x40, 0x07, 0xc5, 0x57, 0x7d, 0xa0, 0xb8,
+};
+
+fn encryptAndEncode(allocator: std.mem.Allocator, key: [encryption.key_length]u8, plaintext: []const u8) ![]const u8 {
+    return try encryption.encryptAndEncodeWithNonce(allocator, key, nonce.*, plaintext);
+}
 /// Serialized into metadata table. This is an explicit enum with a twin
 /// AttributeTypeName enum to make coding with these types easier. Use
 /// Descriptor for storage or communication with the outside world, and
@@ -60,75 +71,193 @@ pub const TableInfo = struct {
     range_key_attribute_name: ?[]const u8,
 };
 
-pub const TableArray = struct {
+pub const AccountTables = struct {
     items: []Table,
+    db: *sqlite.Db,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, length: usize) !TableArray {
+    pub fn init(allocator: std.mem.Allocator, length: usize, db: *sqlite.Db) !AccountTables {
         return .{
             .allocator = allocator,
             .items = try allocator.alloc(Table, length),
+            .db = db,
         };
     }
 
-    pub fn deinit(self: *TableArray) void {
+    pub fn deinit(self: *AccountTables) void {
         for (self.items) |*item|
             item.deinit();
         self.allocator.free(self.items);
     }
 };
 pub const Table = struct {
-    table_name: []const u8,
-    table_key: [encryption.key_length]u8,
+    name: []const u8,
+    key: [encryption.key_length]u8,
+    info: std.json.Parsed(TableInfo),
+    /// underlying data for json parsed version
+    info_str: []const u8,
+    db: *sqlite.Db,
     allocator: std.mem.Allocator,
+    encrypted_name: []const u8,
+
+    pub fn deleteItem(self: *Table, hash_value: []const u8, range_value: ?[]const u8) !void {
+        const encrypted_hash = try encryptAndEncode(self.allocator, self.key, hash_value);
+        defer self.allocator.free(encrypted_hash);
+        const encrypted_range = if (range_value) |r|
+            try encryptAndEncode(self.allocator, self.key, r)
+        else
+            null;
+        defer if (encrypted_range != null) self.allocator.free(encrypted_range.?);
+
+        // TODO: hashKey and rangeKey are text, while hashvalue/rangevalue are blobx
+        // this is to accomodate non-string hash/range value by running a hash
+        // function over the data, probably base64 encoded. Do we want to do
+        // something like this?
+        const delete = try std.fmt.allocPrint(self.allocator,
+            \\DELETE FROM '{s}' WHERE
+            \\    hashKey = ?
+            \\  AND
+            \\    rangeKey = ?
+        , .{self.encrypted_name});
+        defer self.allocator.free(delete);
+        try self.db.execDynamic(delete, .{}, .{
+            encrypted_hash,
+            encrypted_range,
+        });
+    }
+    pub fn putItem(
+        self: *Table,
+        hash_value: []const u8,
+        range_value: ?[]const u8,
+        data: []const u8,
+    ) !void {
+        var sp = try self.db.savepoint("putItem");
+
+        errdefer sp.rollback();
+        // TODO: savepoint this
+        try self.deleteItem(hash_value, range_value);
+        const encrypted_hash = try encryptAndEncode(self.allocator, self.key, hash_value);
+        defer self.allocator.free(encrypted_hash);
+        const encrypted_range = if (range_value) |r|
+            try encryptAndEncode(self.allocator, self.key, r)
+        else
+            null;
+        defer if (encrypted_range != null) self.allocator.free(encrypted_range.?);
+        const encrypted_data = try encryptAndEncode(self.allocator, self.key, data);
+        defer self.allocator.free(encrypted_data);
+
+        // TODO: hashKey and rangeKey are text, while hashvalue/rangevalue are blobx
+        // this is to accomodate non-string hash/range value by running a hash
+        // function over the data, probably base64 encoded. Do we want to do
+        // something like this?
+        const insert = try std.fmt.allocPrint(self.allocator,
+            \\INSERT INTO '{s}' (
+            \\    hashKey,
+            \\    rangeKey,
+            \\    hashValue,
+            \\    rangeValue,
+            \\    itemSize,
+            \\    ObjectJSON
+            \\  ) VALUES ( ?, ?, ?, ?, ?, ? )
+            // This syntax doesn't seem to work here? Used ?'s above
+            // \\  $encrypted_hash{{[]const u8}},
+            // \\  $encrypted_range{{[]const u8}},
+            // \\  $encrypted_hash{{[]const u8}},
+            // \\  $encrypted_range{{[]const u8}},
+            // \\  $len{{usize}},
+            // \\  $encrypted_data{{[]const u8}}
+            // \\  )
+        , .{self.encrypted_name});
+        defer self.allocator.free(insert);
+        var diags = sqlite.Diagnostics{};
+        // std.debug.print(
+        //     \\====================
+        //     \\Insert to table: {s}
+        //     \\  hashKey: {s}
+        //     \\  rangeKey: {?s}
+        //     \\  hashValue: {s}
+        //     \\  rangeValue: {?s}
+        //     \\  itemSize: {d}
+        //     \\  ObjectJSON: {s}
+        //     \\====================
+        // , .{
+        //     self.encrypted_name,
+        //     encrypted_hash,
+        //     encrypted_range,
+        //     encrypted_hash,
+        //     encrypted_range,
+        //     encrypted_data.len,
+        //     encrypted_data,
+        // });
+        self.db.execDynamic(insert, .{ .diags = &diags }, .{
+            encrypted_hash,
+            encrypted_range,
+            encrypted_hash,
+            encrypted_range,
+            encrypted_data.len,
+            encrypted_data,
+        }) catch |e| {
+            std.debug.print("Insert stmt: {s}\n", .{insert});
+            std.debug.print("SqlLite diags: {s}\n", .{diags});
+            return e;
+        };
+        sp.commit();
+    }
 
     pub fn deinit(self: *Table) void {
-        std.crypto.utils.secureZero(u8, &self.table_key);
-        self.allocator.free(self.table_name);
+        std.crypto.utils.secureZero(u8, &self.key);
+        self.allocator.free(self.encrypted_name);
+        self.allocator.free(self.info_str);
+        self.info.deinit();
+        self.allocator.free(self.name);
     }
 };
 
-// Gets all table names/keys for the account. Caller owns returned array
-pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: []const u8) !TableArray {
+/// Gets all table names/keys for the account. Caller owns returned array
+/// The return value will also provide the opened database. As encryption keys
+/// are stored in here, realistically, this will be the first function called
+/// every time anything interacts with the database, so this function opens
+/// the database for you
+pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: []const u8) !AccountTables {
+
+    // TODO: This function should take a list of table names, which can then be used
+    // to filter the query below rather than just grabbing everything
     var db = try Account.dbForAccount(allocator, account_id);
-    defer if (!builtin.is_test) db.deinit();
+    errdefer if (!builtin.is_test) db.deinit();
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
 
     const query =
-        \\SELECT TableName as table_name, TableInfo as table_info FROM dm
+        \\SELECT TableName as name, TableInfo as info FROM dm
     ;
 
     var stmt = try db.prepare(query);
     defer stmt.deinit();
 
     const rows = try stmt.all(struct {
-        table_name: []const u8,
-        table_info: []const u8,
+        name: []const u8,
+        info: []const u8,
     }, allocator, .{}, .{});
     defer allocator.free(rows);
-    var rc = try TableArray.init(allocator, rows.len);
+    var rc = try AccountTables.init(allocator, rows.len, db);
     errdefer rc.deinit();
 
     // std.debug.print(" \n===\nRow count: {d}\n===\n", .{rows.len});
     for (rows, 0..) |row, inx| {
-        defer allocator.free(row.table_name);
-        defer allocator.free(row.table_info);
+        defer allocator.free(row.name);
+        defer allocator.free(row.info);
         const table_name = try encryption.decodeAndDecrypt(
             allocator,
             account.root_account_key.*,
-            row.table_name,
+            row.name,
         );
         errdefer allocator.free(table_name);
         const table_info_str = try encryption.decodeAndDecrypt(
             allocator,
             account.root_account_key.*,
-            row.table_info,
+            row.info,
         );
-        defer allocator.free(table_info_str);
-        // std.debug.print(" \n===TableInfo: {s}\n===\n", .{table_info_str});
-        const table_info = try std.json.parseFromSlice(TableInfo, allocator, table_info_str, .{});
-        defer table_info.deinit();
+
         // errdefer allocator.free(table_info.table_key);
         // defer {
         //     // we don't even really need to defer this...
@@ -141,10 +270,14 @@ pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: []const u8) !T
 
         rc.items[inx] = .{
             .allocator = allocator,
-            .table_name = table_name,
-            .table_key = undefined,
+            .name = table_name,
+            .encrypted_name = try allocator.dupe(u8, row.name),
+            .key = undefined,
+            .info = try std.json.parseFromSlice(TableInfo, allocator, table_info_str, .{}),
+            .info_str = table_info_str,
+            .db = db,
         };
-        try encryption.decodeKey(&rc.items[inx].table_key, table_info.value.table_key);
+        try encryption.decodeKey(&rc.items[inx].key, rc.items[inx].info.value.table_key);
     }
     return rc;
 }
@@ -220,12 +353,12 @@ fn insertIntoDatabaseMetadata(
     billing_mode_pay_per_request: bool,
 ) ![]const u8 {
     // TODO: better to do all encryption when request params are parsed?
-    const encrypted_table_name = try encryption.encryptAndEncode(allocator, account.root_account_key.*, table_name);
+    const encrypted_table_name = try encryptAndEncode(allocator, account.root_account_key.*, table_name);
     errdefer allocator.free(encrypted_table_name);
     // We'll json serialize our table_info structure, encrypt, encode, and plow in
     const table_info_string = try std.json.stringifyAlloc(allocator, table_info, .{ .whitespace = .indent_2 });
     defer allocator.free(table_info_string);
-    const encrypted_table_info = try encryption.encryptAndEncode(allocator, account.root_account_key.*, table_info_string);
+    const encrypted_table_info = try encryptAndEncode(allocator, account.root_account_key.*, table_info_string);
     defer allocator.free(encrypted_table_info);
     try insertIntoDm(db, encrypted_table_name, encrypted_table_info, read_capacity_units, write_capacity_units, billing_mode_pay_per_request);
     return encrypted_table_name;
@@ -279,7 +412,7 @@ fn insertIntoDm(
     });
 }
 
-fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !sqlite.Db {
+fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !*sqlite.Db {
     var db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
@@ -298,7 +431,7 @@ fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !sqlite
     encryption.randomEncodedKey(&table_info.table_key);
     try createDdbTable(
         allocator,
-        &db,
+        db,
         account,
         "MusicCollection",
         table_info,
@@ -312,18 +445,38 @@ test "can create a table" {
     const allocator = std.testing.allocator;
     const account_id = "1234";
     var db = try testCreateTable(allocator, account_id);
+    defer allocator.destroy(db);
     defer db.deinit();
 }
 test "can list tables in an account" {
     Account.test_retain_db = true;
-    defer Account.test_retain_db = false;
     const allocator = std.testing.allocator;
     const account_id = "1234";
     var db = try testCreateTable(allocator, account_id);
-    defer db.deinit();
+    defer allocator.destroy(db);
+    defer Account.testDbDeinit();
     var table_list = try tablesForAccount(allocator, account_id);
     defer table_list.deinit();
     try std.testing.expectEqual(@as(usize, 1), table_list.items.len);
-    try std.testing.expectEqualStrings("MusicCollection", table_list.items[0].table_name);
+    try std.testing.expectEqualStrings("MusicCollection", table_list.items[0].name);
+    // std.debug.print(" \n===\nKey: {s}\n===\n", .{std.fmt.fmtSliceHexLower(&table_list.items[0].table_key)});
+}
+
+test "can put an item in a table in an account" {
+    Account.test_retain_db = true;
+    const allocator = std.testing.allocator;
+    const account_id = "1234";
+    var db = try testCreateTable(allocator, account_id);
+    defer allocator.destroy(db);
+    defer Account.testDbDeinit();
+    var table_list = try tablesForAccount(allocator, account_id);
+    defer table_list.deinit();
+    try std.testing.expectEqualStrings("MusicCollection", table_list.items[0].name);
+    var table = table_list.items[0];
+    try table.putItem("Foo Fighters", "Everlong", "whatevs");
+    // This should succeed, because putItem is an upsert mechanism
+    try table.putItem("Foo Fighters", "Everlong", "whatevs");
+
+    // TODO: this test should do getItem to verify data
     // std.debug.print(" \n===\nKey: {s}\n===\n", .{std.fmt.fmtSliceHexLower(&table_list.items[0].table_key)});
 }

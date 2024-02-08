@@ -5,6 +5,7 @@ pub const salt_length = 256 / 8; // https://crypto.stackexchange.com/a/56132
 pub const encoded_salt_length = std.base64.standard.Encoder.calcSize(salt_length);
 pub const key_length = std.crypto.aead.salsa_poly.XSalsa20Poly1305.key_length;
 pub const encoded_key_length = std.base64.standard.Encoder.calcSize(key_length);
+pub const nonce_length = std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length;
 
 /// Generates a random salt of appropriate length
 pub fn randomSalt(salt: *[salt_length]u8) void {
@@ -56,19 +57,25 @@ pub fn deriveKeyFromEncodedSalt(derived_key: *[key_length]u8, password: []const 
     return derived_key.*;
 }
 
-/// Encrypts data. Use deriveKey function to get a key from password/salt
+/// Encrypts data. Use deriveKey function to get a key from password/salt.
+/// Uses a random nonce. To supply a nonce instead, use encryptWithNonce
 /// Caller owns memory
 pub fn encrypt(allocator: std.mem.Allocator, key: [key_length]u8, plaintext: []const u8) ![]const u8 {
+    var nonce: [std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length]u8 = undefined;
+    std.crypto.random.bytes(&nonce); // add nonce to beginning of our ciphertext
+    return try encryptWithNonce(allocator, key, nonce, plaintext);
+}
+
+pub fn encryptWithNonce(allocator: std.mem.Allocator, key: [key_length]u8, nonce: [nonce_length]u8, plaintext: []const u8) ![]const u8 {
     var ciphertext = try allocator.alloc(
         u8,
-        std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length + plaintext.len,
+        nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length + plaintext.len,
     );
     errdefer allocator.free(ciphertext);
 
     // Create the nonce
-    const nonce_length = std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length;
-    std.crypto.random.bytes(ciphertext[0..nonce_length]); // add nonce to beginning of our ciphertext
-    const nonce = ciphertext[0..nonce_length];
+    @memcpy(ciphertext[0..nonce_length], nonce[0..]); // add nonce to beginning of our ciphertext
+    const nonce_copy = ciphertext[0..nonce_length];
     const tag = ciphertext[nonce_length .. nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length];
     const c = ciphertext[nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length ..];
 
@@ -78,7 +85,7 @@ pub fn encrypt(allocator: std.mem.Allocator, key: [key_length]u8, plaintext: []c
         tag,
         plaintext,
         "ad",
-        nonce.*,
+        nonce_copy.*,
         key,
     );
     return ciphertext;
@@ -95,14 +102,24 @@ pub fn encryptAndEncode(allocator: std.mem.Allocator, key: [key_length]u8, plain
     return Encoder.encode(encoded_ciphertext, ciphertext);
 }
 
+/// Encrypts data. Use deriveKey function to get a key from password/salt
+/// Caller owns memory
+pub fn encryptAndEncodeWithNonce(allocator: std.mem.Allocator, key: [key_length]u8, nonce: [nonce_length]u8, plaintext: []const u8) ![]const u8 {
+    const ciphertext = try encryptWithNonce(allocator, key, nonce, plaintext);
+    defer allocator.free(ciphertext);
+    const Encoder = std.base64.standard.Encoder;
+    var encoded_ciphertext = try allocator.alloc(u8, Encoder.calcSize(ciphertext.len));
+    errdefer allocator.free(encoded_ciphertext);
+    return Encoder.encode(encoded_ciphertext, ciphertext);
+}
+
 /// Decrypts data. Use deriveKey function to get a key from password/salt
 pub fn decrypt(allocator: std.mem.Allocator, key: [key_length]u8, ciphertext: []const u8) ![]const u8 {
     var plaintext = try allocator.alloc(
         u8,
-        ciphertext.len - std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length - std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length,
+        ciphertext.len - nonce_length - std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length,
     );
     errdefer allocator.free(plaintext);
-    const nonce_length = std.crypto.aead.salsa_poly.XSalsa20Poly1305.nonce_length;
     const nonce = ciphertext[0..nonce_length].*;
     const tag = ciphertext[nonce_length .. nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length].*;
     const c = ciphertext[nonce_length + std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length ..];
@@ -162,6 +179,28 @@ test "can encrypt and decrypt data with simpler api but without KDF" {
     const decrypted_text = try decrypt(allocator, key, ciphertext);
     defer allocator.free(decrypted_text);
     try std.testing.expectEqualStrings(plaintext, decrypted_text[0..]);
+}
+
+test "can encrypt twice with same result" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Hello, Zig!";
+    var key: [key_length]u8 = undefined;
+    var nonce: [nonce_length]u8 = undefined;
+    var encoded_key: [encoded_key_length]u8 = undefined;
+    randomEncodedKey(encoded_key[0..]);
+    std.crypto.random.bytes(&nonce);
+    // std.testing.log_level = .debug;
+    std.log.debug("Encoded key: {s}", .{encoded_key});
+
+    try decodeKey(&key, encoded_key);
+    const ciphertext = try encryptWithNonce(allocator, key, nonce, plaintext);
+    defer allocator.free(ciphertext);
+    std.log.debug("Ciphertext: {s}\n", .{std.fmt.fmtSliceHexLower(ciphertext)});
+
+    const ciphertext2 = try encryptWithNonce(allocator, key, nonce, plaintext);
+    defer allocator.free(ciphertext2);
+    std.log.debug("Ciphertext: {s}\n", .{std.fmt.fmtSliceHexLower(ciphertext2)});
+    try std.testing.expectEqualSlices(u8, ciphertext, ciphertext2);
 }
 
 // test "can encrypt and decrypt data" {

@@ -30,11 +30,18 @@ pub fn deinit(self: Self) void {
 
 pub var data_dir: []const u8 = "";
 pub var test_retain_db: bool = false;
-var test_db: ?sqlite.Db = null;
+var test_db: ?*sqlite.Db = null;
 
+pub fn testDbDeinit() void {
+    test_retain_db = false;
+    if (test_db) |db| {
+        db.deinit();
+        test_db = null;
+    }
+}
 /// Gets the database for this account. If under test, a memory database is used
 /// instead. Will initialize the database with appropriate metadata tables
-pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlite.Db {
+pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !*sqlite.Db {
     const builtin = @import("builtin");
     if (builtin.is_test and test_retain_db)
         if (test_db) |db| return db;
@@ -47,7 +54,8 @@ pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !sqlit
     defer allocator.free(db_file_name);
     const mode = if (builtin.is_test) sqlite.Db.Mode.Memory else sqlite.Db.Mode{ .File = db_file_name };
     const new = mode == .Memory or (std.fs.cwd().statFile(file_without_path) catch null == null);
-    var db = try sqlite.Db.init(.{
+    var db = try allocator.create(sqlite.Db);
+    db.* = try sqlite.Db.init(.{
         .mode = mode,
         .open_flags = .{
             .write = true,

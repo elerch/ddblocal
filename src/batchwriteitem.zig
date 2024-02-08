@@ -21,6 +21,63 @@ const AttributeValue = union(ddb.AttributeTypeName) {
     binary_set: [][]const u8,
 
     const Self = @This();
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: *std.json.Scanner,
+        options: std.json.ParseOptions,
+    ) !Self {
+        if (.object_begin != try source.next()) return error.UnexpectedToken;
+        const token = try source.nextAlloc(allocator, options.allocate.?);
+        if (token != .string) return error.UnexpectedToken;
+        var rc: Self = undefined;
+        if (std.mem.eql(u8, token.string, "string"))
+            rc = Self{ .string = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "number"))
+            rc = Self{ .number = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "binary"))
+            rc = Self{ .binary = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "boolean"))
+            rc = Self{ .boolean = try std.json.innerParse(bool, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "null"))
+            rc = Self{ .null = try std.json.innerParse(bool, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "string_set"))
+            rc = Self{ .string_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "number_set"))
+            rc = Self{ .number_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "binary_set"))
+            rc = Self{ .binary_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "list")) {
+            var json = try std.json.Value.jsonParse(allocator, source, options);
+            rc = Self{ .list = json.array };
+        }
+        if (std.mem.eql(u8, token.string, "map")) {
+            var json = try std.json.Value.jsonParse(allocator, source, options);
+            rc = Self{ .map = json.object };
+        }
+        if (.object_end != try source.next()) return error.UnexpectedToken;
+        return rc;
+    }
+
+    pub fn jsonStringify(self: Self, jws: anytype) !void {
+        try jws.beginObject();
+        try jws.objectField(@tagName(self));
+        switch (self) {
+            .string, .number, .binary => |s| try jws.write(s),
+            .boolean, .null => |b| try jws.write(b),
+            .string_set, .number_set, .binary_set => |s| try jws.write(s),
+            .list => |l| try jws.write(l.items),
+            .map => |inner| {
+                try jws.beginObject();
+                var it = inner.iterator();
+                while (it.next()) |entry| {
+                    try jws.objectField(entry.key_ptr.*);
+                    try jws.write(entry.value_ptr.*);
+                }
+                try jws.endObject();
+            },
+        }
+        return try jws.endObject();
+    }
     pub fn validate(self: Self) !void {
         switch (self) {
             .string, .string_set, .boolean, .null, .map, .list => {},
@@ -475,19 +532,114 @@ const Params = struct {
 pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     const allocator = request.allocator;
     const account_id = request.account_id;
-    _ = account_id;
 
     var params = try Params.parseRequest(allocator, request, writer);
     defer params.deinit();
+    try params.validate();
+
     // 1. Get the list of encrypted table names using the account id root key
-    // 2. Get the matching table-scope encryption keys
-    // 3. For each table request:
-    //    1. Find the hash values of put and delete requests in the request
-    //    2. Encrypt the hash values
-    //    3. Delete any existing records with that hash value (for delete requests, we're done here)
-    //    4. If put request, put the new item in the table (with encrypted values, using table encryption)
+    var account_tables = try ddb.tablesForAccount(allocator, account_id);
+    defer account_tables.deinit();
+    // 2. For each table request:
+    for (params.request_items) |table_req| {
+        var request_table: ddb.Table = undefined;
+        var found = false;
+        for (account_tables.items) |tbl| {
+            if (std.mem.eql(u8, tbl.name, table_req.table_name)) {
+                request_table = tbl;
+                found = true;
+            }
+        }
+        if (!found) {
+            std.log.warn("Table name in request does not exist in account. Table name specified: {s}", .{table_req.table_name});
+            continue; // TODO: This API has the concept of returning the list of unprocessed stuff. We need to do that here
+        }
+        for (table_req.requests) |req| {
+            if (req.put_request) |p|
+                try process_request(allocator, account_tables.db, &request_table, .put, p);
+            if (req.delete_request) |d|
+                try process_request(allocator, account_tables.db, &request_table, .delete, d);
+        }
+    }
     // TODO: Capacity limiting and metrics
-    return "hi";
+    if (params.return_consumed_capacity != .none or params.return_item_collection_metrics)
+        try returnException(
+            request,
+            .internal_server_error,
+            error.NotImplemented,
+            writer,
+            "Changes processed, but metrics/capacity are not yet implemented",
+        );
+    // {
+    //     "UnprocessedItems": {
+    //         "Forum": [
+    //             {
+    //                 "PutRequest": {
+    //                     "Item": {
+    //                         "Name": {
+    //                             "S": "Amazon ElastiCache"
+    //                         },
+    //                         "Category": {
+    //                             "S": "Amazon Web Services"
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         ]
+    //     },
+    //     "ConsumedCapacity": [
+    //         {
+    //             "TableName": "Forum",
+    //             "CapacityUnits": 3
+    //         }
+    //     ]
+    // }
+    return "{}";
+}
+const RequestType = enum {
+    put,
+    delete,
+};
+fn process_request(
+    allocator: std.mem.Allocator,
+    db: anytype,
+    table: *ddb.Table,
+    req_type: RequestType,
+    req_attributes: []Attribute,
+) !void {
+    _ = db;
+    // 1. Find the hash values of put and delete requests in the request
+    const hash_key_attribute_name = table.info.value.hash_key_attribute_name;
+    const range_key_attribute_name = table.info.value.range_key_attribute_name;
+    var hash_attribute: ?Attribute = null;
+    var range_attribute: ?Attribute = null;
+    for (req_attributes) |*att| {
+        if (std.mem.eql(u8, att.name, hash_key_attribute_name)) {
+            hash_attribute = att.*;
+            continue;
+        }
+        if (range_key_attribute_name) |r| {
+            if (std.mem.eql(u8, att.name, r))
+                range_attribute = att.*;
+        }
+    }
+    if (hash_attribute == null) return error.HashAttributeNotFound;
+    if (range_attribute == null and range_key_attribute_name != null) return error.RangeAttributeNotFound;
+
+    const hash_value = try std.json.stringifyAlloc(allocator, hash_attribute.?.value, .{});
+    defer allocator.free(hash_value);
+    const range_value = if (range_attribute) |r|
+        try std.json.stringifyAlloc(allocator, r.value, .{})
+    else
+        null;
+    defer if (range_value) |r| allocator.free(r);
+    if (req_type == .delete) {
+        try table.deleteItem(hash_value, range_value);
+    } else {
+        const attributes_as_string = try std.json.stringifyAlloc(allocator, req_attributes, .{});
+        defer allocator.free(attributes_as_string);
+        try table.putItem(hash_value, range_value, attributes_as_string);
+    }
 }
 
 test "basic request parsing failure" {
@@ -660,4 +812,249 @@ test "all types request parsing" {
     try std.base64.standard.Decoder.decode(buf, put[2].value.binary);
     try std.testing.expectEqualStrings("this text is base64-encoded", buf);
     try std.testing.expect(put_and_or_delete.delete_request == null);
+}
+
+test "write item" {
+    Account.test_retain_db = true;
+    defer Account.testDbDeinit();
+    const allocator = std.testing.allocator;
+    const account_id = "1234";
+    var db = try Account.dbForAccount(allocator, account_id);
+    defer allocator.destroy(db);
+    defer Account.testDbDeinit();
+    const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
+    defer account.deinit();
+    var hash = ddb.AttributeDefinition{ .name = "Artist", .type = .S };
+    var range = ddb.AttributeDefinition{ .name = "SongTitle", .type = .S };
+    var definitions = @constCast(&[_]*ddb.AttributeDefinition{
+        &hash,
+        &range,
+    });
+    var table_info: ddb.TableInfo = .{
+        .table_key = undefined,
+        .attribute_definitions = definitions[0..],
+        .hash_key_attribute_name = "Artist",
+        .range_key_attribute_name = "SongTitle",
+    };
+    encryption.randomEncodedKey(&table_info.table_key);
+    try ddb.createDdbTable(
+        allocator,
+        db,
+        account,
+        "MusicCollection",
+        table_info,
+        5,
+        5,
+        false,
+    );
+    var request = AuthenticatedRequest{
+        .output_format = .text,
+        .event_data =
+        \\ {
+        \\    "RequestItems": {
+        \\        "MusicCollection": [
+        \\            {
+        \\                "PutRequest": {
+        \\                    "Item": {
+        \\                        "Artist": {
+        \\                            "S": "Mettalica"
+        \\                        },
+        \\                        "SongTitle": {
+        \\                            "S": "Master of Puppets"
+        \\                        },
+        \\                        "Binary": {
+        \\                            "B": "dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"
+        \\                        },
+        \\                        "Boolean": {
+        \\                            "BOOL": true
+        \\                        },
+        \\                        "Null": {
+        \\                            "NULL": true
+        \\                        },
+        \\                        "List": {
+        \\                            "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+        \\                        },
+        \\                        "Map": {
+        \\                            "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
+        \\                        },
+        \\                        "Number Set": {
+        \\                            "NS": ["42.2", "-19", "7.5", "3.14"]
+        \\                        },
+        \\                        "Binary Set": {
+        \\                            "BS": ["U3Vubnk=", "UmFpbnk=", "U25vd3k="]
+        \\                        },
+        \\                        "String Set": {
+        \\                            "SS": ["Giraffe", "Hippo" ,"Zebra"]
+        \\                        }
+        \\                    }
+        \\                }
+        \\            }
+        \\        ]
+        \\ }
+        \\ }
+        ,
+        .headers = undefined,
+        .status = .ok,
+        .reason = "",
+        .account_id = "1234",
+        .allocator = allocator,
+    };
+    var al = std.ArrayList(u8).init(allocator);
+    defer al.deinit();
+    var writer = al.writer();
+    _ = try handler(&request, writer);
+}
+
+test "round trip attributes" {
+    const allocator = std.testing.allocator;
+    var json_stuff = try std.json.parseFromSlice(std.json.Value, allocator,
+        \\ {
+        \\ "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}},
+        \\ "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+        \\ }
+    , .{});
+    defer json_stuff.deinit();
+    const map = json_stuff.value.object.get("M").?.object;
+    const list = json_stuff.value.object.get("L").?.array;
+    const attributes = &[_]Attribute{
+        .{
+            .name = "foo",
+            .value = .{ .string = "bar" },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .number = "42" },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .binary = "YmFy" }, // "bar"
+        },
+        .{
+            .name = "foo",
+            .value = .{ .boolean = true },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .null = false },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .string_set = @constCast(&[_][]const u8{ "foo", "bar" }) },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .number_set = @constCast(&[_][]const u8{ "41", "42" }) },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .binary_set = @constCast(&[_][]const u8{ "Zm9v", "YmFy" }) }, // foo, bar
+        },
+        .{
+            .name = "foo",
+            .value = .{ .map = map },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .list = list },
+        },
+    };
+    const attributes_as_string = try std.json.stringifyAlloc(
+        allocator,
+        attributes,
+        .{ .whitespace = .indent_2 },
+    );
+    defer allocator.free(attributes_as_string);
+    try std.testing.expectEqualStrings(
+        \\[
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "string": "bar"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "number": "42"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "binary": "YmFy"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "boolean": true
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "null": false
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "string_set": [
+        \\        "foo",
+        \\        "bar"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "number_set": [
+        \\        "41",
+        \\        "42"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "binary_set": [
+        \\        "Zm9v",
+        \\        "YmFy"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "map": {
+        \\        "Name": {
+        \\          "S": "Joe"
+        \\        },
+        \\        "Age": {
+        \\          "N": "35"
+        \\        }
+        \\      }
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "list": [
+        \\        {
+        \\          "S": "Cookies"
+        \\        },
+        \\        {
+        \\          "S": "Coffee"
+        \\        },
+        \\        {
+        \\          "N": "3.14159"
+        \\        }
+        \\      ]
+        \\    }
+        \\  }
+        \\]
+    , attributes_as_string);
+
+    var round_tripped = try std.json.parseFromSlice([]Attribute, allocator, attributes_as_string, .{});
+    defer round_tripped.deinit();
 }

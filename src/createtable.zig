@@ -62,12 +62,14 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
         allocator.free(request_params.table_info.attribute_definitions);
     }
     var db = try Account.dbForAccount(allocator, account_id);
+    defer allocator.destroy(db);
+    defer db.deinit();
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
 
     try ddb.createDdbTable(
         allocator,
-        &db,
+        db,
         account,
         request_params.table_name,
         request_params.table_info,
