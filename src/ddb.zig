@@ -56,6 +56,175 @@ pub const AttributeDefinition = struct {
     type: AttributeTypeDescriptor,
 };
 
+pub const AttributeValue = union(AttributeTypeName) {
+    string: []const u8,
+    number: []const u8, // Floating point stored as string
+    binary: []const u8, // Base64-encoded binary data object
+    boolean: bool,
+    null: bool,
+    map: std.json.ObjectMap, // We're just holding the json...in the DB we probably just stringify this?
+    // "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
+    list: std.json.Array, // Again, just hoding json here:
+    // "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+    string_set: [][]const u8,
+    number_set: [][]const u8,
+    binary_set: [][]const u8,
+
+    const Self = @This();
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: *std.json.Scanner,
+        options: std.json.ParseOptions,
+    ) !Self {
+        if (.object_begin != try source.next()) return error.UnexpectedToken;
+        const token = try source.nextAlloc(allocator, options.allocate.?);
+        if (token != .string) return error.UnexpectedToken;
+        var rc: ?Self = null;
+        if (std.mem.eql(u8, token.string, "string") or std.mem.eql(u8, token.string, "S"))
+            rc = Self{ .string = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "number") or std.mem.eql(u8, token.string, "N"))
+            rc = Self{ .number = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "binary") or std.mem.eql(u8, token.string, "B"))
+            rc = Self{ .binary = try std.json.innerParse([]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "boolean") or std.mem.eql(u8, token.string, "BOOL"))
+            rc = Self{ .boolean = try std.json.innerParse(bool, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "null") or std.mem.eql(u8, token.string, "NULL"))
+            rc = Self{ .null = try std.json.innerParse(bool, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "string_set") or std.mem.eql(u8, token.string, "SS"))
+            rc = Self{ .string_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "number_set") or std.mem.eql(u8, token.string, "NS"))
+            rc = Self{ .number_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "binary_set") or std.mem.eql(u8, token.string, "BS"))
+            rc = Self{ .binary_set = try std.json.innerParse([][]const u8, allocator, source, options) };
+        if (std.mem.eql(u8, token.string, "list") or std.mem.eql(u8, token.string, "L")) {
+            var json = try std.json.Value.jsonParse(allocator, source, options);
+            rc = Self{ .list = json.array };
+        }
+        if (std.mem.eql(u8, token.string, "map") or std.mem.eql(u8, token.string, "M")) {
+            var json = try std.json.Value.jsonParse(allocator, source, options);
+            rc = Self{ .map = json.object };
+        }
+        if (rc == null) return error.InvalidEnumTag;
+        if (.object_end != try source.next()) return error.UnexpectedToken;
+        rc.?.validate() catch return error.InvalidCharacter;
+        return rc.?;
+    }
+
+    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !Self {
+        if (source != .object) return error.UnexpectedToken;
+        var rc: ?Self = null;
+        if (source.object.get("string") orelse source.object.get("S")) |attr|
+            rc = Self{ .string = try std.json.innerParseFromValue([]const u8, allocator, attr, options) };
+        if (source.object.get("number") orelse source.object.get("N")) |attr|
+            rc = Self{ .number = try std.json.innerParseFromValue([]const u8, allocator, attr, options) };
+        if (source.object.get("binary") orelse source.object.get("B")) |attr|
+            rc = Self{ .binary = try std.json.innerParseFromValue([]const u8, allocator, attr, options) };
+        if (source.object.get("boolean") orelse source.object.get("BOOL")) |attr|
+            rc = Self{ .boolean = try std.json.innerParseFromValue(bool, allocator, attr, options) };
+        if (source.object.get("null") orelse source.object.get("NULL")) |attr|
+            rc = Self{ .null = try std.json.innerParseFromValue(bool, allocator, attr, options) };
+        if (source.object.get("string_set") orelse source.object.get("SS")) |attr|
+            rc = Self{ .string_set = try std.json.innerParseFromValue([][]const u8, allocator, attr, options) };
+        if (source.object.get("number_set") orelse source.object.get("NS")) |attr|
+            rc = Self{ .number_set = try std.json.innerParseFromValue([][]const u8, allocator, attr, options) };
+        if (source.object.get("binary_set") orelse source.object.get("BS")) |attr|
+            rc = Self{ .binary_set = try std.json.innerParseFromValue([][]const u8, allocator, attr, options) };
+        if (source.object.get("list") orelse source.object.get("L")) |attr| {
+            var json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
+            rc = Self{ .list = json.array };
+        }
+        if (source.object.get("map") orelse source.object.get("M")) |attr| {
+            var json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
+            rc = Self{ .map = json.object };
+        }
+        if (rc == null) return error.InvalidEnumTag;
+
+        return rc.?;
+    }
+
+    pub fn jsonStringify(self: Self, jws: anytype) !void {
+        try jws.beginObject();
+        try jws.objectField(switch (self) {
+            .string => "S",
+            .number => "N",
+            .binary => "B",
+            .boolean => "BOOL",
+            .null => "NULL",
+            .string_set => "SS",
+            .number_set => "NS",
+            .binary_set => "BS",
+            .list => "L",
+            .map => "M",
+        });
+        switch (self) {
+            .string, .number, .binary => |s| try jws.write(s),
+            .boolean, .null => |b| try jws.write(b),
+            .string_set, .number_set, .binary_set => |s| try jws.write(s),
+            .list => |l| try jws.write(l.items),
+            .map => |inner| {
+                try jws.beginObject();
+                var it = inner.iterator();
+                while (it.next()) |entry| {
+                    try jws.objectField(entry.key_ptr.*);
+                    try jws.write(entry.value_ptr.*);
+                }
+                try jws.endObject();
+            },
+        }
+        return try jws.endObject();
+    }
+    pub fn validate(self: Self) !void {
+        switch (self) {
+            .string, .string_set, .boolean, .null, .map, .list => {},
+            .number => |s| _ = try std.fmt.parseFloat(f64, s),
+            .binary => |s| try base64Validate(std.base64.standard.Decoder, s),
+            .number_set => |ns| for (ns) |s| {
+                _ = try std.fmt.parseFloat(f64, s);
+            },
+            .binary_set => |bs| for (bs) |s| try base64Validate(std.base64.standard.Decoder, s),
+        }
+    }
+
+    fn base64Validate(decoder: std.base64.Base64Decoder, source: []const u8) std.base64.Error!void {
+        const invalid_char = 0xff;
+        // This is taken from the stdlib decode function and modified to simply
+        // not write anything
+        if (decoder.pad_char != null and source.len % 4 != 0) return error.InvalidPadding;
+        var acc: u12 = 0;
+        var acc_len: u4 = 0;
+        var leftover_idx: ?usize = null;
+        for (source, 0..) |c, src_idx| {
+            const d = decoder.char_to_index[c];
+            if (d == invalid_char) {
+                if (decoder.pad_char == null or c != decoder.pad_char.?) return error.InvalidCharacter;
+                leftover_idx = src_idx;
+                break;
+            }
+            acc = (acc << 6) + d;
+            acc_len += 6;
+            if (acc_len >= 8) {
+                acc_len -= 8;
+            }
+        }
+        if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
+            return error.InvalidPadding;
+        }
+        if (leftover_idx == null) return;
+        var leftover = source[leftover_idx.?..];
+        if (decoder.pad_char) |pad_char| {
+            const padding_len = acc_len / 2;
+            var padding_chars: usize = 0;
+            for (leftover) |c| {
+                if (c != pad_char) {
+                    return if (c == invalid_char) error.InvalidCharacter else error.InvalidPadding;
+                }
+                padding_chars += 1;
+            }
+            if (padding_chars != padding_len) return error.InvalidPadding;
+        }
+    }
+};
+
 /// TableInfo is serialized directly into the underlying metadata table, along
 /// with AttributeDefinition structure and types
 pub const TableInfo = struct {
@@ -479,4 +648,250 @@ test "can put an item in a table in an account" {
 
     // TODO: this test should do getItem to verify data
     // std.debug.print(" \n===\nKey: {s}\n===\n", .{std.fmt.fmtSliceHexLower(&table_list.items[0].table_key)});
+}
+
+test "can parse attribute values using slices" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\                    {
+        \\                        "String": {
+        \\                            "S": "Amazon DynamoDB"
+        \\                        },
+        \\                        "Number": {
+        \\                            "N": "1.3"
+        \\                        },
+        \\                        "Binary": {
+        \\                            "B": "dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"
+        \\                        },
+        \\                        "Boolean": {
+        \\                            "BOOL": true
+        \\                        },
+        \\                        "Null": {
+        \\                            "NULL": true
+        \\                        },
+        \\                        "List": {
+        \\                            "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+        \\                        },
+        \\                        "Map": {
+        \\                            "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
+        \\                        },
+        \\                        "Number Set": {
+        \\                            "NS": ["42.2", "-19", "7.5", "3.14"]
+        \\                        },
+        \\                        "Binary Set": {
+        \\                            "BS": ["U3Vubnk=", "UmFpbnk=", "U25vd3k="]
+        \\                        },
+        \\                        "String Set": {
+        \\                            "SS": ["Giraffe", "Hippo" ,"Zebra"]
+        \\                        }
+        \\                    }
+    ;
+    const source_value = try std.json.parseFromSlice(std.json.Value, allocator, source, .{});
+    defer source_value.deinit();
+    var val = source_value.value.object.get("String").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("Amazon DynamoDB", attribute_value.value.string);
+    }
+    val = source_value.value.object.get("Number").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("1.3", attribute_value.value.number);
+    }
+    val = source_value.value.object.get("Binary").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk", attribute_value.value.binary);
+    }
+    val = source_value.value.object.get("Boolean").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(true, attribute_value.value.boolean);
+    }
+    val = source_value.value.object.get("Null").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(true, attribute_value.value.null);
+    }
+    val = source_value.value.object.get("List").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.list.items.len);
+    }
+    val = source_value.value.object.get("Map").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 2), attribute_value.value.map.keys().len);
+    }
+    val = source_value.value.object.get("Number Set").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 4), attribute_value.value.number_set.len);
+        try std.testing.expectEqualStrings("7.5", attribute_value.value.number_set[2]);
+    }
+    val = source_value.value.object.get("Binary Set").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.binary_set.len);
+        try std.testing.expectEqualStrings("U25vd3k=", attribute_value.value.binary_set[2]);
+    }
+    val = source_value.value.object.get("String Set").?;
+    {
+        const attribute_value_string = try std.json.stringifyAlloc(allocator, val, .{});
+        defer allocator.free(attribute_value_string);
+
+        const attribute_value = try std.json.parseFromSlice(AttributeValue, allocator, attribute_value_string, .{});
+        // const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.string_set.len);
+        try std.testing.expectEqualStrings("Zebra", attribute_value.value.string_set[2]);
+    }
+}
+
+test "can parse attribute values using jsonvalue" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\                    {
+        \\                        "String": {
+        \\                            "S": "Amazon DynamoDB"
+        \\                        },
+        \\                        "Number": {
+        \\                            "N": "1.3"
+        \\                        },
+        \\                        "Binary": {
+        \\                            "B": "dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"
+        \\                        },
+        \\                        "Boolean": {
+        \\                            "BOOL": true
+        \\                        },
+        \\                        "Null": {
+        \\                            "NULL": true
+        \\                        },
+        \\                        "List": {
+        \\                            "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+        \\                        },
+        \\                        "Map": {
+        \\                            "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
+        \\                        },
+        \\                        "Number Set": {
+        \\                            "NS": ["42.2", "-19", "7.5", "3.14"]
+        \\                        },
+        \\                        "Binary Set": {
+        \\                            "BS": ["U3Vubnk=", "UmFpbnk=", "U25vd3k="]
+        \\                        },
+        \\                        "String Set": {
+        \\                            "SS": ["Giraffe", "Hippo" ,"Zebra"]
+        \\                        }
+        \\                    }
+    ;
+    const source_value = try std.json.parseFromSlice(std.json.Value, allocator, source, .{});
+    defer source_value.deinit();
+    var val = source_value.value.object.get("String").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("Amazon DynamoDB", attribute_value.value.string);
+    }
+    val = source_value.value.object.get("Number").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("1.3", attribute_value.value.number);
+    }
+    val = source_value.value.object.get("Binary").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqualStrings("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk", attribute_value.value.binary);
+    }
+    val = source_value.value.object.get("Boolean").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(true, attribute_value.value.boolean);
+    }
+    val = source_value.value.object.get("Null").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(true, attribute_value.value.null);
+    }
+    val = source_value.value.object.get("List").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.list.items.len);
+    }
+    val = source_value.value.object.get("Map").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 2), attribute_value.value.map.keys().len);
+    }
+    val = source_value.value.object.get("Number Set").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 4), attribute_value.value.number_set.len);
+        try std.testing.expectEqualStrings("7.5", attribute_value.value.number_set[2]);
+    }
+    val = source_value.value.object.get("Binary Set").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.binary_set.len);
+        try std.testing.expectEqualStrings("U25vd3k=", attribute_value.value.binary_set[2]);
+    }
+    val = source_value.value.object.get("String Set").?;
+    {
+        const attribute_value = try std.json.parseFromValue(AttributeValue, allocator, val, .{});
+        defer attribute_value.deinit();
+        try std.testing.expectEqual(@as(usize, 3), attribute_value.value.string_set.len);
+        try std.testing.expectEqualStrings("Zebra", attribute_value.value.string_set[2]);
+    }
 }

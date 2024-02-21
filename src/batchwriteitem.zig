@@ -6,132 +6,9 @@ const encryption = @import("encryption.zig");
 const ddb = @import("ddb.zig");
 const returnException = @import("main.zig").returnException;
 
-const AttributeValue = union(ddb.AttributeTypeName) {
-    string: []const u8,
-    number: []const u8, // Floating point stored as string
-    binary: []const u8, // Base64-encoded binary data object
-    boolean: bool,
-    null: bool,
-    map: std.json.ObjectMap, // We're just holding the json...in the DB we probably just stringify this?
-    // "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
-    list: std.json.Array, // Again, just hoding json here:
-    // "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
-    string_set: [][]const u8,
-    number_set: [][]const u8,
-    binary_set: [][]const u8,
-
-    const Self = @This();
-    pub fn jsonParse(
-        allocator: std.mem.Allocator,
-        source: *std.json.Scanner,
-        options: std.json.ParseOptions,
-    ) !Self {
-        if (.object_begin != try source.next()) return error.UnexpectedToken;
-        const token = try source.nextAlloc(allocator, options.allocate.?);
-        if (token != .string) return error.UnexpectedToken;
-        var rc: Self = undefined;
-        if (std.mem.eql(u8, token.string, "string"))
-            rc = Self{ .string = try std.json.innerParse([]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "number"))
-            rc = Self{ .number = try std.json.innerParse([]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "binary"))
-            rc = Self{ .binary = try std.json.innerParse([]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "boolean"))
-            rc = Self{ .boolean = try std.json.innerParse(bool, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "null"))
-            rc = Self{ .null = try std.json.innerParse(bool, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "string_set"))
-            rc = Self{ .string_set = try std.json.innerParse([][]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "number_set"))
-            rc = Self{ .number_set = try std.json.innerParse([][]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "binary_set"))
-            rc = Self{ .binary_set = try std.json.innerParse([][]const u8, allocator, source, options) };
-        if (std.mem.eql(u8, token.string, "list")) {
-            var json = try std.json.Value.jsonParse(allocator, source, options);
-            rc = Self{ .list = json.array };
-        }
-        if (std.mem.eql(u8, token.string, "map")) {
-            var json = try std.json.Value.jsonParse(allocator, source, options);
-            rc = Self{ .map = json.object };
-        }
-        if (.object_end != try source.next()) return error.UnexpectedToken;
-        return rc;
-    }
-
-    pub fn jsonStringify(self: Self, jws: anytype) !void {
-        try jws.beginObject();
-        try jws.objectField(@tagName(self));
-        switch (self) {
-            .string, .number, .binary => |s| try jws.write(s),
-            .boolean, .null => |b| try jws.write(b),
-            .string_set, .number_set, .binary_set => |s| try jws.write(s),
-            .list => |l| try jws.write(l.items),
-            .map => |inner| {
-                try jws.beginObject();
-                var it = inner.iterator();
-                while (it.next()) |entry| {
-                    try jws.objectField(entry.key_ptr.*);
-                    try jws.write(entry.value_ptr.*);
-                }
-                try jws.endObject();
-            },
-        }
-        return try jws.endObject();
-    }
-    pub fn validate(self: Self) !void {
-        switch (self) {
-            .string, .string_set, .boolean, .null, .map, .list => {},
-            .number => |s| _ = try std.fmt.parseFloat(f64, s),
-            .binary => |s| try base64Validate(std.base64.standard.Decoder, s),
-            .number_set => |ns| for (ns) |s| {
-                _ = try std.fmt.parseFloat(f64, s);
-            },
-            .binary_set => |bs| for (bs) |s| try base64Validate(std.base64.standard.Decoder, s),
-        }
-    }
-
-    fn base64Validate(decoder: std.base64.Base64Decoder, source: []const u8) std.base64.Error!void {
-        const invalid_char = 0xff;
-        // This is taken from the stdlib decode function and modified to simply
-        // not write anything
-        if (decoder.pad_char != null and source.len % 4 != 0) return error.InvalidPadding;
-        var acc: u12 = 0;
-        var acc_len: u4 = 0;
-        var leftover_idx: ?usize = null;
-        for (source, 0..) |c, src_idx| {
-            const d = decoder.char_to_index[c];
-            if (d == invalid_char) {
-                if (decoder.pad_char == null or c != decoder.pad_char.?) return error.InvalidCharacter;
-                leftover_idx = src_idx;
-                break;
-            }
-            acc = (acc << 6) + d;
-            acc_len += 6;
-            if (acc_len >= 8) {
-                acc_len -= 8;
-            }
-        }
-        if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
-            return error.InvalidPadding;
-        }
-        if (leftover_idx == null) return;
-        var leftover = source[leftover_idx.?..];
-        if (decoder.pad_char) |pad_char| {
-            const padding_len = acc_len / 2;
-            var padding_chars: usize = 0;
-            for (leftover) |c| {
-                if (c != pad_char) {
-                    return if (c == invalid_char) error.InvalidCharacter else error.InvalidPadding;
-                }
-                padding_chars += 1;
-            }
-            if (padding_chars != padding_len) return error.InvalidPadding;
-        }
-    }
-};
 const Attribute = struct {
     name: []const u8,
-    value: AttributeValue,
+    value: ddb.AttributeValue,
 };
 
 const Request = struct {
@@ -335,42 +212,12 @@ const Params = struct {
         //          {
         //             "DeleteRequest": {
         //                "Key": {
-        //                   "string" : {
-        //                      "B": blob,
-        //                      "BOOL": boolean,
-        //                      "BS": [ blob ],
-        //                      "L": [
-        //                         "AttributeValue"
-        //                      ],
-        //                      "M": {
-        //                         "string" : "AttributeValue"
-        //                      },
-        //                      "N": "string",
-        //                      "NS": [ "string" ],
-        //                      "NULL": boolean,
-        //                      "S": "string",
-        //                      "SS": [ "string" ]
-        //                   }
+        //                   "string" : {...attribute value...}
         //                }
         //             },
         //             "PutRequest": {
         //                "Item": {
-        //                   "string" : {
-        //                      "B": blob,
-        //                      "BOOL": boolean,
-        //                      "BS": [ blob ],
-        //                      "L": [
-        //                         "AttributeValue"
-        //                      ],
-        //                      "M": {
-        //                         "string" : "AttributeValue"
-        //                      },
-        //                      "N": "string",
-        //                      "NS": [ "string" ],
-        //                      "NULL": boolean,
-        //                      "S": "string",
-        //                      "SS": [ "string" ]
-        //                   }
+        //                   "string" : {...attribute value...}
         //                }
         //             }
         //          }
@@ -387,22 +234,7 @@ const Params = struct {
         writer: anytype,
     ) ![]Attribute {
         //  {
-        //    "string" : {
-        //       "B": blob,
-        //       "BOOL": boolean,
-        //       "BS": [ blob ],
-        //       "L": [
-        //          "AttributeValue"
-        //       ],
-        //       "M": {
-        //          "string" : "AttributeValue"
-        //       },
-        //       "N": "string",
-        //       "NS": [ "string" ],
-        //       "NULL": boolean,
-        //       "S": "string",
-        //       "SS": [ "string" ]
-        //    }
+        //    "string" : {...attribute value...}
         //  }
         var attribute_count = value.count();
         if (attribute_count == 0)
@@ -429,103 +261,9 @@ const Params = struct {
                     "Request in RequestItems found invalid attributes in object",
                 );
             rc[inx].name = key; //try arena.dupe(u8, key);
-            var val_iterator = val.object.iterator();
-            var val_val = val_iterator.next().?;
-            const attribute_type = val_val.key_ptr.*; // This should be "S", "N", "NULL", "BOOL", etc
-            const attribute_value = val_val.value_ptr.*;
-            // Convert this to our enum
-            const attribute_type_enum = std.meta.stringToEnum(ddb.AttributeTypeDescriptor, attribute_type);
-            if (attribute_type_enum == null)
-                try returnException(
-                    request,
-                    .bad_request,
-                    error.ValidationException,
-                    writer,
-                    "Request in RequestItems found attribute with invalid type",
-                );
-            // Now we need to get *THIS* enum over to our union, which uses the same values
-            // We'll just use a switch here, because each of these cases must
-            // be handled slightly differently
-            var final_attribute_value: AttributeValue = undefined;
-            switch (attribute_type_enum.?.toAttributeTypeName()) {
-                .string => {
-                    try expectType(attribute_value, .string, request, writer);
-                    final_attribute_value = .{ .string = attribute_value.string };
-                },
-                .number => {
-                    // There is a .number_string, but I think that is for stringify?
-                    try expectType(attribute_value, .string, request, writer);
-                    final_attribute_value = .{ .number = attribute_value.string };
-                },
-                .binary => {
-                    try expectType(attribute_value, .string, request, writer);
-                    final_attribute_value = .{ .binary = attribute_value.string };
-                },
-                .boolean => {
-                    try expectType(attribute_value, .bool, request, writer);
-                    final_attribute_value = .{ .boolean = attribute_value.bool };
-                },
-                .null => {
-                    try expectType(attribute_value, .bool, request, writer);
-                    final_attribute_value = .{ .null = attribute_value.bool };
-                },
-                .map => {
-                    try expectType(attribute_value, .object, request, writer);
-                    final_attribute_value = .{ .map = attribute_value.object };
-                },
-                .list => {
-                    try expectType(attribute_value, .array, request, writer);
-                    final_attribute_value = .{ .list = attribute_value.array };
-                },
-                .string_set => {
-                    try expectType(attribute_value, .array, request, writer);
-                    final_attribute_value = .{ .string_set = try toStringArray(arena, attribute_value.array, request, writer) };
-                },
-                .number_set => {
-                    try expectType(attribute_value, .array, request, writer);
-                    final_attribute_value = .{ .number_set = try toStringArray(arena, attribute_value.array, request, writer) };
-                },
-                .binary_set => {
-                    try expectType(attribute_value, .array, request, writer);
-                    final_attribute_value = .{ .binary_set = try toStringArray(arena, attribute_value.array, request, writer) };
-                },
-            }
-            rc[inx].value = final_attribute_value;
+            rc[inx].value = try std.json.parseFromValueLeaky(ddb.AttributeValue, arena, val, .{});
         }
         return rc;
-    }
-
-    fn toStringArray(
-        arena: std.mem.Allocator,
-        arr: std.json.Array,
-        request: *AuthenticatedRequest,
-        writer: anytype,
-    ) ![][]const u8 {
-        var rc = try arena.alloc([]const u8, arr.items.len);
-        for (arr.items, 0..) |item, inx| {
-            try expectType(item, .string, request, writer);
-            rc[inx] = item.string;
-        }
-        return rc;
-    }
-
-    fn expectType(actual: std.json.Value, comptime expected: @TypeOf(.enum_literal), request: *AuthenticatedRequest, writer: anytype) !void {
-        if (actual != expected)
-            try returnException(
-                request,
-                .bad_request,
-                error.ValidationException,
-                writer,
-                "Attribute type does not match expected type",
-            );
-        if (actual == .array and actual.array.items.len == 0)
-            try returnException(
-                request,
-                .bad_request,
-                error.ValidationException,
-                writer,
-                "Attribute array cannot be empty",
-            );
     }
 };
 
@@ -969,37 +707,37 @@ test "round trip attributes" {
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "string": "bar"
+        \\      "S": "bar"
         \\    }
         \\  },
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "number": "42"
+        \\      "N": "42"
         \\    }
         \\  },
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "binary": "YmFy"
+        \\      "B": "YmFy"
         \\    }
         \\  },
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "boolean": true
+        \\      "BOOL": true
         \\    }
         \\  },
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "null": false
+        \\      "NULL": false
         \\    }
         \\  },
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "string_set": [
+        \\      "SS": [
         \\        "foo",
         \\        "bar"
         \\      ]
@@ -1008,7 +746,7 @@ test "round trip attributes" {
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "number_set": [
+        \\      "NS": [
         \\        "41",
         \\        "42"
         \\      ]
@@ -1017,7 +755,7 @@ test "round trip attributes" {
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "binary_set": [
+        \\      "BS": [
         \\        "Zm9v",
         \\        "YmFy"
         \\      ]
@@ -1026,7 +764,7 @@ test "round trip attributes" {
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "map": {
+        \\      "M": {
         \\        "Name": {
         \\          "S": "Joe"
         \\        },
@@ -1039,7 +777,7 @@ test "round trip attributes" {
         \\  {
         \\    "name": "foo",
         \\    "value": {
-        \\      "list": [
+        \\      "L": [
         \\        {
         \\          "S": "Cookies"
         \\        },
