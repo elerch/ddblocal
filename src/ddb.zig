@@ -4,6 +4,7 @@ const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
 const Account = @import("Account.zig");
 const encryption = @import("encryption.zig");
 const builtin = @import("builtin");
+const returnException = @import("main.zig").returnException;
 
 // We need our enryption to be able to store/retrieve and otherwise work like
 // a database. So the use of a nonce here defeats these use cases
@@ -54,6 +55,56 @@ pub const AttributeTypeName = enum(u4) {
 pub const AttributeDefinition = struct {
     name: []const u8,
     type: AttributeTypeDescriptor,
+};
+
+pub const ReturnConsumedCapacity = enum {
+    indexes,
+    total,
+    none,
+};
+
+pub const Attribute = struct {
+    name: []const u8,
+    value: AttributeValue,
+
+    pub fn parseAttributes(
+        arena: std.mem.Allocator,
+        value: std.json.ObjectMap,
+        request: *AuthenticatedRequest,
+        writer: anytype,
+    ) ![]Attribute {
+        //  {
+        //    "string" : {...attribute value...}
+        //  }
+        var attribute_count = value.count();
+        if (attribute_count == 0)
+            try returnException(
+                request,
+                .bad_request,
+                error.ValidationException,
+                writer,
+                "Request in RequestItems found without any attributes in object",
+            );
+        var rc = try arena.alloc(Attribute, attribute_count);
+        var iterator = value.iterator();
+        var inx: usize = 0;
+        while (iterator.next()) |att| : (inx += 1) {
+            const key = att.key_ptr.*;
+            const val = att.value_ptr.*;
+            // std.debug.print(" \n====\nkey = \"{s}\"\nval = {any}\n====\n", .{ key, val.object.count() });
+            if (val != .object or val.object.count() != 1)
+                try returnException(
+                    request,
+                    .bad_request,
+                    error.ValidationException,
+                    writer,
+                    "Request in RequestItems found invalid attributes in object",
+                );
+            rc[inx].name = key; //try arena.dupe(u8, key);
+            rc[inx].value = try std.json.parseFromValueLeaky(AttributeValue, arena, val, .{});
+        }
+        return rc;
+    }
 };
 
 pub const AttributeValue = union(AttributeTypeName) {
@@ -894,4 +945,158 @@ test "can parse attribute values using jsonvalue" {
         try std.testing.expectEqual(@as(usize, 3), attribute_value.value.string_set.len);
         try std.testing.expectEqualStrings("Zebra", attribute_value.value.string_set[2]);
     }
+}
+
+test "round trip attributes" {
+    const allocator = std.testing.allocator;
+    var json_stuff = try std.json.parseFromSlice(std.json.Value, allocator,
+        \\ {
+        \\ "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}},
+        \\ "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
+        \\ }
+    , .{});
+    defer json_stuff.deinit();
+    const map = json_stuff.value.object.get("M").?.object;
+    const list = json_stuff.value.object.get("L").?.array;
+    const attributes = &[_]Attribute{
+        .{
+            .name = "foo",
+            .value = .{ .string = "bar" },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .number = "42" },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .binary = "YmFy" }, // "bar"
+        },
+        .{
+            .name = "foo",
+            .value = .{ .boolean = true },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .null = false },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .string_set = @constCast(&[_][]const u8{ "foo", "bar" }) },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .number_set = @constCast(&[_][]const u8{ "41", "42" }) },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .binary_set = @constCast(&[_][]const u8{ "Zm9v", "YmFy" }) }, // foo, bar
+        },
+        .{
+            .name = "foo",
+            .value = .{ .map = map },
+        },
+        .{
+            .name = "foo",
+            .value = .{ .list = list },
+        },
+    };
+    const attributes_as_string = try std.json.stringifyAlloc(
+        allocator,
+        attributes,
+        .{ .whitespace = .indent_2 },
+    );
+    defer allocator.free(attributes_as_string);
+    try std.testing.expectEqualStrings(
+        \\[
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "S": "bar"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "N": "42"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "B": "YmFy"
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "BOOL": true
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "NULL": false
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "SS": [
+        \\        "foo",
+        \\        "bar"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "NS": [
+        \\        "41",
+        \\        "42"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "BS": [
+        \\        "Zm9v",
+        \\        "YmFy"
+        \\      ]
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "M": {
+        \\        "Name": {
+        \\          "S": "Joe"
+        \\        },
+        \\        "Age": {
+        \\          "N": "35"
+        \\        }
+        \\      }
+        \\    }
+        \\  },
+        \\  {
+        \\    "name": "foo",
+        \\    "value": {
+        \\      "L": [
+        \\        {
+        \\          "S": "Cookies"
+        \\        },
+        \\        {
+        \\          "S": "Coffee"
+        \\        },
+        \\        {
+        \\          "N": "3.14159"
+        \\        }
+        \\      ]
+        \\    }
+        \\  }
+        \\]
+    , attributes_as_string);
+
+    var round_tripped = try std.json.parseFromSlice([]Attribute, allocator, attributes_as_string, .{});
+    defer round_tripped.deinit();
 }

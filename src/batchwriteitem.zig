@@ -6,28 +6,18 @@ const encryption = @import("encryption.zig");
 const ddb = @import("ddb.zig");
 const returnException = @import("main.zig").returnException;
 
-const Attribute = struct {
-    name: []const u8,
-    value: ddb.AttributeValue,
-};
-
 const Request = struct {
-    put_request: ?[]Attribute,
-    delete_request: ?[]Attribute,
+    put_request: ?[]ddb.Attribute,
+    delete_request: ?[]ddb.Attribute,
 };
 const RequestItem = struct {
     table_name: []const u8,
     requests: []Request,
 };
 
-const ReturnConsumedCapacity = enum {
-    indexes,
-    total,
-    none,
-};
 const Params = struct {
     request_items: []RequestItem,
-    return_consumed_capacity: ReturnConsumedCapacity = .none,
+    return_consumed_capacity: ddb.ReturnConsumedCapacity = .none,
     return_item_collection_metrics: bool = false,
     arena: *std.heap.ArenaAllocator,
 
@@ -87,7 +77,7 @@ const Params = struct {
                     "ReturnConsumedCapacity value invalid. Valid values are INDEXES | TOTAL | NONE",
                 );
             const val = try std.ascii.allocLowerString(aa, rcc.string);
-            rc.return_consumed_capacity = std.meta.stringToEnum(ReturnConsumedCapacity, val).?;
+            rc.return_consumed_capacity = std.meta.stringToEnum(ddb.ReturnConsumedCapacity, val).?;
         }
         if (parsed.object.get("ReturnItemCollectionMetrics")) |rcm| {
             if (rcm != .string or
@@ -187,7 +177,7 @@ const Params = struct {
                                 "PutRequest in RequestItems found without Item object",
                             );
                         // Parse item object and assign to array
-                        table_request.put_request = try parseAttributes(aa, put_val.?.object, request, writer);
+                        table_request.put_request = try ddb.Attribute.parseAttributes(aa, put_val.?.object, request, writer);
                     } else {
                         const del_val = pod_val.object.get("Keys");
                         if (del_val == null or del_val.? != .object)
@@ -199,7 +189,7 @@ const Params = struct {
                                 "DeleteRequest in RequestItems found without Key object",
                             );
                         // Parse key object and assign to array
-                        table_request.delete_request = try parseAttributes(aa, del_val.?.object, request, writer);
+                        table_request.delete_request = try ddb.Attribute.parseAttributes(aa, del_val.?.object, request, writer);
                     }
                 }
                 rc.request_items[inx].requests[jnx] = table_request.*;
@@ -226,44 +216,6 @@ const Params = struct {
         //    "ReturnConsumedCapacity": "string",
         //    "ReturnItemCollectionMetrics": "string"
         // }
-    }
-    fn parseAttributes(
-        arena: std.mem.Allocator,
-        value: anytype,
-        request: *AuthenticatedRequest,
-        writer: anytype,
-    ) ![]Attribute {
-        //  {
-        //    "string" : {...attribute value...}
-        //  }
-        var attribute_count = value.count();
-        if (attribute_count == 0)
-            try returnException(
-                request,
-                .bad_request,
-                error.ValidationException,
-                writer,
-                "Request in RequestItems found without any attributes in object",
-            );
-        var rc = try arena.alloc(Attribute, attribute_count);
-        var iterator = value.iterator();
-        var inx: usize = 0;
-        while (iterator.next()) |att| : (inx += 1) {
-            const key = att.key_ptr.*;
-            const val = att.value_ptr.*;
-            // std.debug.print(" \n====\nkey = \"{s}\"\nval = {any}\n====\n", .{ key, val.object.count() });
-            if (val != .object or val.object.count() != 1)
-                try returnException(
-                    request,
-                    .bad_request,
-                    error.ValidationException,
-                    writer,
-                    "Request in RequestItems found invalid attributes in object",
-                );
-            rc[inx].name = key; //try arena.dupe(u8, key);
-            rc[inx].value = try std.json.parseFromValueLeaky(ddb.AttributeValue, arena, val, .{});
-        }
-        return rc;
     }
 };
 
@@ -343,14 +295,14 @@ fn process_request(
     db: anytype,
     table: *ddb.Table,
     req_type: RequestType,
-    req_attributes: []Attribute,
+    req_attributes: []ddb.Attribute,
 ) !void {
     _ = db;
     // 1. Find the hash values of put and delete requests in the request
     const hash_key_attribute_name = table.info.value.hash_key_attribute_name;
     const range_key_attribute_name = table.info.value.range_key_attribute_name;
-    var hash_attribute: ?Attribute = null;
-    var range_attribute: ?Attribute = null;
+    var hash_attribute: ?ddb.Attribute = null;
+    var range_attribute: ?ddb.Attribute = null;
     for (req_attributes) |*att| {
         if (std.mem.eql(u8, att.name, hash_key_attribute_name)) {
             hash_attribute = att.*;
@@ -641,158 +593,4 @@ test "write item" {
     defer al.deinit();
     var writer = al.writer();
     _ = try handler(&request, writer);
-}
-
-test "round trip attributes" {
-    const allocator = std.testing.allocator;
-    var json_stuff = try std.json.parseFromSlice(std.json.Value, allocator,
-        \\ {
-        \\ "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}},
-        \\ "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
-        \\ }
-    , .{});
-    defer json_stuff.deinit();
-    const map = json_stuff.value.object.get("M").?.object;
-    const list = json_stuff.value.object.get("L").?.array;
-    const attributes = &[_]Attribute{
-        .{
-            .name = "foo",
-            .value = .{ .string = "bar" },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .number = "42" },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .binary = "YmFy" }, // "bar"
-        },
-        .{
-            .name = "foo",
-            .value = .{ .boolean = true },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .null = false },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .string_set = @constCast(&[_][]const u8{ "foo", "bar" }) },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .number_set = @constCast(&[_][]const u8{ "41", "42" }) },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .binary_set = @constCast(&[_][]const u8{ "Zm9v", "YmFy" }) }, // foo, bar
-        },
-        .{
-            .name = "foo",
-            .value = .{ .map = map },
-        },
-        .{
-            .name = "foo",
-            .value = .{ .list = list },
-        },
-    };
-    const attributes_as_string = try std.json.stringifyAlloc(
-        allocator,
-        attributes,
-        .{ .whitespace = .indent_2 },
-    );
-    defer allocator.free(attributes_as_string);
-    try std.testing.expectEqualStrings(
-        \\[
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "S": "bar"
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "N": "42"
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "B": "YmFy"
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "BOOL": true
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "NULL": false
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "SS": [
-        \\        "foo",
-        \\        "bar"
-        \\      ]
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "NS": [
-        \\        "41",
-        \\        "42"
-        \\      ]
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "BS": [
-        \\        "Zm9v",
-        \\        "YmFy"
-        \\      ]
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "M": {
-        \\        "Name": {
-        \\          "S": "Joe"
-        \\        },
-        \\        "Age": {
-        \\          "N": "35"
-        \\        }
-        \\      }
-        \\    }
-        \\  },
-        \\  {
-        \\    "name": "foo",
-        \\    "value": {
-        \\      "L": [
-        \\        {
-        \\          "S": "Cookies"
-        \\        },
-        \\        {
-        \\          "S": "Coffee"
-        \\        },
-        \\        {
-        \\          "N": "3.14159"
-        \\        }
-        \\      ]
-        \\    }
-        \\  }
-        \\]
-    , attributes_as_string);
-
-    var round_tripped = try std.json.parseFromSlice([]Attribute, allocator, attributes_as_string, .{});
-    defer round_tripped.deinit();
 }
