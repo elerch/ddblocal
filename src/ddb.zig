@@ -73,6 +73,7 @@ pub const Attribute = struct {
         request: *AuthenticatedRequest,
         writer: anytype,
     ) ![]Attribute {
+        // TODO: remove this function
         //  {
         //    "string" : {...attribute value...}
         //  }
@@ -344,6 +345,49 @@ pub const Table = struct {
             encrypted_hash,
             encrypted_range,
         });
+    }
+    pub fn getItem(
+        self: *Table,
+        hash_value: []const u8,
+        range_value: ?[]const u8,
+    ) ![][]const u8 {
+        const encrypted_hash = try encryptAndEncode(self.allocator, self.key, hash_value);
+        defer self.allocator.free(encrypted_hash);
+        const range_clause = blk: {
+            if (range_value == null) break :blk "";
+            const encrypted_range = try encryptAndEncode(self.allocator, self.key, range_value.?);
+            defer self.allocator.free(encrypted_range);
+            // This is base64 encoded, so no chance of sql injection with this
+            break :blk try std.fmt.allocPrint(self.allocator, "\n  AND rangeKey = '{s}'", .{encrypted_range});
+        };
+        defer if (range_value != null) self.allocator.free(range_clause);
+        // const encrypted_data = try encryptAndEncode(self.allocator, self.key, data);
+        // defer self.allocator.free(encrypted_data);
+
+        // TODO: hashKey and rangeKey are text, while hashvalue/rangevalue are blobx
+        // this is to accomodate non-string hash/range value by running a hash
+        // function over the data, probably base64 encoded. Do we want to do
+        // something like this?
+        const select = try std.fmt.allocPrint(self.allocator,
+            \\SELECT ObjectJSON FROM '{s}'
+            \\  WHERE hashKey = ? {s}
+        , .{ self.encrypted_name, range_clause });
+        defer self.allocator.free(select);
+        var stmt = try self.db.prepareDynamic(select);
+        defer stmt.deinit();
+
+        var iter = try stmt.iterator([]const u8, .{
+            .hash = encrypted_hash,
+        });
+        var results = std.ArrayList([]const u8).init(self.allocator);
+        defer results.deinit();
+        while (try iter.nextAlloc(self.allocator, .{})) |encoded_data| {
+            defer self.allocator.free(encoded_data);
+            const data = try encryption.decodeAndDecrypt(self.allocator, self.key, encoded_data);
+            try results.append(data);
+        }
+
+        return results.toOwnedSlice();
     }
     pub fn putItem(
         self: *Table,
