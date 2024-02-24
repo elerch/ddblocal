@@ -4,6 +4,7 @@ const universal_lambda_interface = @import("universal_lambda_interface");
 const universal_lambda_options = @import("universal_lambda_build_options");
 const signing = @import("aws-signing");
 const AuthenticatedRequest = @import("AuthenticatedRequest.zig");
+const Account = @import("Account.zig");
 
 const log = std.log.scoped(.dynamodb);
 
@@ -95,6 +96,11 @@ fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_inte
         .target = target,
         .headers = headers,
     };
+    if (root_creds == null) {
+        root_creds = std.StringHashMap(signing.Credentials).init(allocator);
+        root_account_mapping = std.StringHashMap([]const u8).init(allocator);
+        Account.root_key_mapping = std.StringHashMap([]const u8).init(allocator);
+    }
     const auth_bypass =
         @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
     const is_authenticated = auth_bypass or
@@ -118,17 +124,144 @@ fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_inte
     }
 }
 
-// TODO: Get hook these functions up to IAM for great good
 var test_credential: signing.Credentials = undefined;
+var root_creds: ?std.StringHashMap(signing.Credentials) = null;
+var root_account_mapping: std.StringHashMap([]const u8) = undefined;
+var creds_buf: [8192]u8 = undefined;
 fn getCreds(access: []const u8) ?signing.Credentials {
+    // We have 3 levels of access here
+    //
+    // 1. Test creds, used strictly for debugging
+    // 2. Creds from the root file, ideally used only for bootstrapping
+    // 3. Creds from STS GetAccessKeyInfo API call, which should be 99%+ of ops
     if (std.mem.eql(u8, access, "ACCESS")) return test_credential;
+    fillRootCreds() catch |e| {
+        log.err("Error filling root creds. Base authentication will not work until this is fixed: {}", .{e});
+        return null;
+    };
+    log.debug("Creds for access key {s}: {any}", .{ access, root_creds.?.get(access) != null });
+    if (root_creds.?.get(access)) |c| return c;
+    log.err("Creds not found in store. STS GetAccessKeyInfo call is not yet implemented", .{});
     return null;
 }
+
+fn fillRootCreds() !void {
+    if (root_creds.?.count() > 0) return;
+    var fb_allocator = std.heap.FixedBufferAllocator.init(&creds_buf);
+    const allocator = fb_allocator.allocator();
+    var file = std.fs.cwd().openFile("access_keys.csv", .{}) catch |e| {
+        log.err("Could not open access_keys.csv to access root creds: {}", .{e});
+        return e;
+    };
+    defer file.close();
+    var buf_reader = std.io.bufferedReader(file.reader());
+    const reader = buf_reader.reader();
+
+    var file_buf: [8192]u8 = undefined; // intentionally kept small here...this should be used sparingly
+    var file_fb_allocator = std.heap.FixedBufferAllocator.init(&file_buf);
+    const file_allocator = file_fb_allocator.allocator();
+
+    var line = std.ArrayList(u8).init(file_allocator);
+    defer line.deinit();
+
+    const line_writer = line.writer();
+    var line_num: usize = 1;
+    while (reader.streamUntilDelimiter(line_writer, '\n', null)) : (line_num += 1) {
+        defer line.clearRetainingCapacity();
+        var relevant_line = line.items[0 .. std.mem.indexOfScalar(u8, line.items, '#') orelse line.items.len];
+        const relevant_line_trimmed = std.mem.trim(u8, relevant_line, " \t");
+        var value_iterator = std.mem.splitScalar(u8, relevant_line_trimmed, ',');
+        if (std.mem.trim(u8, value_iterator.peek().?, " \t").len == 0) continue;
+        var val_num: usize = 0;
+        var access_key: []const u8 = undefined;
+        var secret_key: []const u8 = undefined;
+        var account_id: []const u8 = undefined;
+        var existing_key: []const u8 = undefined;
+        var new_key: []const u8 = undefined;
+        while (value_iterator.next()) |val| : (val_num += 1) {
+            const actual_val = std.mem.trim(u8, val, " \t");
+            switch (val_num) {
+                0 => access_key = actual_val,
+                1 => secret_key = actual_val,
+                2 => account_id = actual_val,
+                3 => existing_key = actual_val,
+                4 => new_key = actual_val,
+                else => {
+                    log.err("access_keys.csv Error on line {d}: too many values", .{line_num});
+                    return error.TooManyValues;
+                },
+            }
+        }
+        if (val_num < 4) {
+            log.err("access_keys.csv Error on line {d}: too few values", .{line_num});
+            return error.TooFewValues;
+        }
+        const global_access_key = try allocator.dupe(u8, access_key);
+        try root_creds.?.put(global_access_key, .{
+            .access_key = global_access_key, // we need to copy all these into our global buffer
+            .secret_key = try allocator.dupe(u8, secret_key),
+            .session_token = null,
+            .allocator = NullAllocator.init(),
+        });
+        const global_account_id = try allocator.dupe(u8, account_id);
+        try root_account_mapping.put(global_access_key, global_account_id);
+        try Account.root_key_mapping.?.put(global_account_id, try allocator.dupe(u8, existing_key));
+        // TODO: key rotation will need another hash map, can be triggered on val_num == 5
+
+    } else |e| switch (e) {
+        error.EndOfStream => {}, // will this work without \n at the end of file?
+        else => return e,
+    }
+}
+
+const NullAllocator = struct {
+    const thing = 0;
+    const vtable = std.mem.Allocator.VTable{
+        .alloc = alloc,
+        .resize = resize,
+        .free = free,
+    };
+
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+        _ = ctx;
+        _ = len;
+        _ = ptr_align;
+        _ = ret_addr;
+        return null;
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+        _ = ctx;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = ret_addr;
+        return false;
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+        _ = ctx;
+        _ = buf;
+        _ = buf_align;
+        _ = ret_addr;
+    }
+
+    pub fn init() std.mem.Allocator {
+        return .{
+            .ptr = @ptrFromInt(@intFromPtr(&thing)),
+            .vtable = &vtable,
+        };
+    }
+};
 
 fn accountForAccessKey(allocator: std.mem.Allocator, access_key: []const u8) ![]const u8 {
     _ = allocator;
     log.debug("Finding account for access key: '{s}'", .{access_key});
-    return "1234";
+    // Since this happens after authentication, we can assume our root creds store
+    // is populated
+    if (root_account_mapping.get(access_key)) |account| return account;
+    log.err("Creds not found in store. STS GetAccessKeyInfo call is not yet implemented", .{});
+    return error.NotImplemented;
 }
 /// Function assumes an authenticated request, so signing.verify must be called
 /// and returned true before calling this function. If authentication header

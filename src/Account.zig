@@ -10,21 +10,35 @@ const Self = @This();
 allocator: std.mem.Allocator,
 root_account_key: *[encryption.key_length]u8,
 
+pub var root_key_mapping: ?std.StringHashMap([]const u8) = null;
+
 pub fn accountForId(allocator: std.mem.Allocator, account_id: []const u8) !Self {
-    // TODO: Allow environment variables to house encoded keys. If not in the
-    //       environment, check with LocalDB table to get it. We're
-    //       building LocalDB, though, so we need that working first...
-    if (!std.mem.eql(u8, account_id, "1234")) {
-        log.err("Got account id '{s}', but only '1234' is valid right now", .{account_id});
-        return error.NotImplemented;
+    if (std.mem.eql(u8, account_id, "1234")) {
+        var key = try allocator.alloc(u8, encryption.key_length);
+        errdefer allocator.free(key);
+        try encryption.decodeKey(key[0..encryption.key_length], test_account_key.*);
+        return Self{
+            .allocator = allocator,
+            .root_account_key = key[0..encryption.key_length],
+        };
     }
-    var key = try allocator.alloc(u8, encryption.key_length);
-    errdefer allocator.free(key);
-    try encryption.decodeKey(key[0..encryption.key_length], test_account_key.*);
-    return Self{
-        .allocator = allocator,
-        .root_account_key = key[0..encryption.key_length],
-    };
+
+    // Check our root mappings (populated elsewhere)
+    if (root_key_mapping) |m| {
+        if (m.get(account_id)) |k| {
+            var key = try allocator.alloc(u8, encryption.key_length);
+            errdefer allocator.free(key);
+            try encryption.decodeKey(key[0..encryption.key_length], @constCast(k[0..encryption.encoded_key_length]).*);
+            return Self{
+                .allocator = allocator,
+                .root_account_key = key[0..encryption.key_length],
+            };
+        }
+    }
+
+    // TODO: Check STS
+    log.err("Got account id '{s}', but could not find this ('1234' is test account). STS GetAccessKeyInfo not implemented", .{account_id});
+    return error.NotImplemented;
 }
 
 pub fn deinit(self: Self) void {
