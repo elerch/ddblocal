@@ -1,0 +1,62 @@
+name: AWS-Zig Build
+run-name: ${{ github.actor }} building ddblocal
+on:
+  push:
+    branches:
+      - '*'
+      - '!zig-develop*'
+env:
+  ACTIONS_RUNTIME_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ACTIONS_RUNTIME_URL: ${{ env.GITHUB_SERVER_URL }}/api/actions_pipeline/
+jobs:
+  build-zig-0.11.0-amd64-host:
+    runs-on: ubuntu-latest
+    # Need to use the default container with node and all that, so we can
+    # use JS-based actions like actions/checkout@v3...
+    # container:
+    #   image: alpine:3.15.0
+    env:
+      ZIG_VERSION: 0.11.0
+      ARCH: x86_64
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      # ARCH is fine, but we can't substitute directly because zig
+      # uses x86_64 instead of amd64. They also use aarch64 instead of arm64.
+      #
+      # However, arm64/linux isn't quite fully tier 1 yet, so this is more of a
+      # TODO: https://github.com/ziglang/zig/issues/2443
+      - name: Install zig
+        run: |
+          wget -q https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ARCH}-${ZIG_VERSION}.tar.xz
+          tar x -C /usr/local -f zig-linux-${ARCH}-${ZIG_VERSION}.tar.xz
+          ln -s /usr/local/zig-linux-${ARCH}-${ZIG_VERSION}/zig /usr/local/bin/zig
+      - name: Run tests
+        run: zig build test --verbose
+      - name: Build example
+        run: ( cd example && zig build ) # Make sure example builds
+      # - name: Sign
+      #   id: sign
+      #   uses: https://git.lerch.org/lobo/action-hsm-sign@v1
+      #   with:
+      #     pin: ${{ secrets.HSM_USER_PIN }}
+      #     files: ???
+      #     public_key: 'https://emil.lerch.org/serverpublic.pem'
+      # - run: |
+      #     echo "Source 0 should be ./bar: ${{ steps.sign.outputs.SOURCE_0 }}"
+      # - run: |
+      #     echo "Signature 0 should be ./bar.sig: ${{ steps.sign.outputs.SIG_0 }}"
+      # - run: echo "URL of bar (0) is ${{ steps.sign.outputs.URL_0 }}"
+      # - run: |
+      #     echo "Source 1 should be ./foo: ${{ steps.sign.outputs.SOURCE_1 }}"
+      # - run: |
+      #     echo "Signature 1 should be ./foo.sig: ${{ steps.sign.outputs.SIG_1 }}"
+      # - run: echo "URL of foo (1) is ${{ steps.sign.outputs.URL_1 }}"
+      - name: Notify
+        uses: https://git.lerch.org/lobo/action-notify-ntfy@v2
+        if: always()
+        with:
+          host: ${{ secrets.NTFY_HOST }}
+          topic: ${{ secrets.NTFY_TOPIC }}
+          user: ${{ secrets.NTFY_USER }}
+          password: ${{ secrets.NTFY_PASSWORD }}
