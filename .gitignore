@@ -1,3 +1,6 @@
 core
 zig-*/
 access_keys.csv
+*.sqlite3
+shared-local-instance.db
+*.json
