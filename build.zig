@@ -95,8 +95,39 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
-    // Format:
-    // Access Key,Account Id,Existing encoded encryption key, New encoded encryption
+    // Account id:
+    //     Documentation describes account id as a 12 digit number:
+    //     https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-identifiers.html
+    //     This can be a random u64, but must be in a 12 digit range, which
+    //     is:
+    //
+    //     Min: 0x05f5e100 (0d100000000)
+    //     Max: 0x3b9ac9ff (0d999999999)
+    //
+    // Access key:
+    //     Access key is 20 characters and can be represented by base36
+    //     https://en.wikipedia.org/wiki/Base36
+    //     (it is nearly definitely base36 in AWS in practice)
+    //     At least the first two characters are not part of the number...they
+    //     have meaning. AK for a permanent key, AS for a session token.
+    //     We shall use "EL" just...because. Maybe ET later for session tokens.
+    //     This gives us 18 characters to work with, making our range like this:
+    //
+    //     Min:
+    //     NN100000000000000000 (hex: 0xECFF3BCC40CA2000000000)
+    //     Max:
+    //     NNZZZZZZZZZZZZZZZZZZ (hex: 0x2153E468B91C6E0000000000)
+    //
+    //     The max value therefore requires a u96 to represent, as does the
+    //     difference between max and min (0x2066e52cecdba40000000000). However,
+    //     Zig 0.11.0 cannot handle random numbers that large
+    //     (https://github.com/ziglang/zig/blob/0.11.0/lib/std/rand.zig#L145),
+    //     so for now we use a random u64 and call it good.
+    //
+    // Secret Access Key:
+    //     In the wild, these are 40 characters and appear to be base64 encoded.
+    //     Base64 encoding of 30 bytes is always exactly 40 characters and have
+    //     no padding, which is exactly what we observe
     _ = prog_node;
     const encryption = @import("src/encryption.zig");
     var key: [encryption.encoded_key_length]u8 = undefined;
@@ -123,38 +154,28 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     var encoded_secret: [40]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&encoded_secret, secret_key[0..]);
 
-    std.debug.print(
-        "access_key: EL{s}, secret_key: {s}, account_number: {d}, db_encryption_key: {s}",
+    const stdout_raw = std.io.getStdOut().writer();
+    var stdout_writer = std.io.bufferedWriter(stdout_raw);
+    const stdout = stdout_writer.writer();
+    stdout.print(
+        "# access_key: EL{s}, secret_key: {s}, account_number: {d}, db_encryption_key: {s}",
         .{
             access_key_suffix_encoded,
             encoded_secret,
             account_number,
             key,
         },
-    );
-    // Documentation describes account id as a 12 digit number:
-    // https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-identifiers.html
-    // Random u64
-    // Max: 0x3b9ac9ff (0d999999999)
-    // Min: 0x05f5e100 (0d100000000)
-    //
-    // Access key and secret key are probably more loose. Here is one:
-    //
-    //     "AccessKey": {
-    //     "AccessKeyId": "AKIAYAM4POHXNMQUDBNG",
-    //     "SecretAccessKey": "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",
-    // }
-    // Access key appears 20 characters A-Z, 0-9. Starts with AK or AS, so
-    // 18 characters of random, and it looks like base36
-    // https://ziglang.org/documentation/0.11.0/std/src/std/base64.zig.html
-    // https://en.wikipedia.org/wiki/Base36
-    // For 18 characters, the lower end would be:
-    // NN100000000000000000 (hex: ECFF3BCC40CA2000000000)
-    // Upper:
-    // NNZZZZZZZZZZZZZZZZZZ (hex: 2153E468B91C6E0000000000)
-    // Which can be stored in u24
-    // Secret key here is 40 characters and roughly looks like base64 encoded
-    // random binary data, which it probably is. 40 characters of base64 is 32 bytes of data
+    ) catch return error.MakeFailed;
+    stdout.print(
+        "\n#\n# You can copy/paste the following line into access_keys.csv:\nEL{s},{s}{d}{s}\n",
+        .{
+            access_key_suffix_encoded,
+            encoded_secret,
+            account_number,
+            key,
+        },
+    ) catch return error.MakeFailed;
+    stdout_writer.flush() catch return error.MakeFailed;
 }
 
 /// encodes an unsigned integer into base36
