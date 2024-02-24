@@ -25,7 +25,7 @@ pub fn main() !u8 {
 
 pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: universal_lambda_interface.Context) ![]const u8 {
     const builtin = @import("builtin");
-    var rss: std.os.rusage = undefined;
+    var rss: if (builtin.os.tag == .linux) std.os.rusage else usize = undefined;
     if (builtin.os.tag == .linux and builtin.mode == .Debug)
         rss = std.os.getrusage(std.os.rusage.SELF);
     defer if (builtin.os.tag == .linux and builtin.mode == .Debug) { // and  debug mode) {
@@ -122,7 +122,7 @@ fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_inte
         .headers = headers,
     };
     const auth_bypass =
-        @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
+        @import("builtin").os.tag == .linux and @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
     const is_authenticated = auth_bypass or
         signing.verify(allocator, request, body_reader, getCreds) catch |err| {
         if (std.mem.eql(u8, "AuthorizationHeaderMissing", @errorName(err))) {

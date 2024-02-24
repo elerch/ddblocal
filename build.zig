@@ -1,11 +1,11 @@
 const std = @import("std");
 const universal_lambda = @import("universal_lambda_build");
 
+// This seems to fail for some reason. zig-sqlite does a lot of messing with
+// the target. So instead, we will handle this in the CI/CD system at the
+// command line
 const test_targets = [_]std.zig.CrossTarget{
     .{}, // native
-
-    // We seem to have compile erros with the rest, all due to sqlite
-    // I believe either zig+c files or zig-sqlite is not super cross-target friendly
     // .{
     //     .cpu_arch = .x86_64,
     //     .os_tag = .linux,
@@ -18,6 +18,7 @@ const test_targets = [_]std.zig.CrossTarget{
     //     .cpu_arch = .riscv64,
     //     .os_tag = .linux,
     // },
+    // will not work
     // .{
     //     .cpu_arch = .arm,
     //     .os_tag = .linux,
@@ -96,23 +97,37 @@ pub fn build(b: *std.Build) !void {
 
     try universal_lambda.configureBuild(b, exe);
 
-    const aws_dep = b.dependency("aws", .{
+    const exe_aws_dep = b.dependency("aws", .{
         .target = target,
         .optimize = optimize,
     });
-    const aws_signing_module = aws_dep.module("aws-signing");
-    const sqlite_dep = b.dependency("sqlite", .{
+    const exe_aws_signing_module = exe_aws_dep.module("aws-signing");
+    const exe_sqlite_dep = b.dependency("sqlite", .{
         .target = target,
         .optimize = optimize,
         .use_bundled = true,
     });
-    const sqlite_module = sqlite_dep.module("sqlite");
-
+    const exe_sqlite_module = exe_sqlite_dep.module("sqlite");
+    exe.addModule("aws-signing", exe_aws_signing_module);
+    exe.addModule("sqlite", exe_sqlite_module);
+    exe.addIncludePath(.{ .path = "c" });
+    exe.linkLibrary(exe_sqlite_dep.artifact("sqlite"));
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     for (test_targets) |t| {
+        const aws_dep = b.dependency("aws", .{
+            .target = t,
+            .optimize = optimize,
+        });
+        const aws_signing_module = aws_dep.module("aws-signing");
+        const sqlite_dep = b.dependency("sqlite", .{
+            .target = t,
+            .optimize = optimize,
+            .use_bundled = true,
+        });
+        const sqlite_module = sqlite_dep.module("sqlite");
         // Creates a step for unit testing. This only builds the test executable
         // but does not run it.
         const unit_tests = b.addTest(.{
@@ -127,12 +142,10 @@ pub fn build(b: *std.Build) !void {
 
         test_step.dependOn(&run_unit_tests.step);
 
-        for (&[_]*std.Build.Step.Compile{ exe, unit_tests }) |cs| {
-            cs.addModule("aws-signing", aws_signing_module);
-            cs.addModule("sqlite", sqlite_module);
-            cs.addIncludePath(.{ .path = "c" });
-            cs.linkLibrary(sqlite_dep.artifact("sqlite"));
-        }
+        unit_tests.addModule("aws-signing", aws_signing_module);
+        unit_tests.addModule("sqlite", sqlite_module);
+        unit_tests.addIncludePath(.{ .path = "c" });
+        unit_tests.linkLibrary(sqlite_dep.artifact("sqlite"));
     }
 
     var creds_step = b.step("generate_credentials", "Generate credentials for access_keys.csv");

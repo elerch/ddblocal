@@ -33,8 +33,14 @@ jobs:
           ln -s /usr/local/zig-linux-${ARCH}-${ZIG_VERSION}/zig /usr/local/bin/zig
       - name: Run tests
         run: zig build test --verbose
-      - name: Build example
-        run: ( cd example && zig build ) # Make sure example builds
+      - name: Build other platforms
+        run: |
+          zig build -Dtarget=aarch64-macos
+          zig build -Dtarget=x86_64-macos
+          zig build -Dtarget=x86_64-windows
+          zig build -Dtarget=aarch64-linux
+          zig build -Dtarget=riscv64-linux
+          zig build -Dtarget=x86_64-linux
       # - name: Sign
       #   id: sign
       #   uses: https://git.lerch.org/lobo/action-hsm-sign@v1
