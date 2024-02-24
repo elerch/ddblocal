@@ -1,6 +1,46 @@
 const std = @import("std");
 const universal_lambda = @import("universal_lambda_build");
 
+const test_targets = [_]std.zig.CrossTarget{
+    .{}, // native
+
+    // We seem to have compile erros with the rest, all due to sqlite
+    // .{
+    //     .cpu_arch = .x86_64,
+    //     .os_tag = .linux,
+    // },
+    // .{
+    //     .cpu_arch = .aarch64,
+    //     .os_tag = .linux,
+    // },
+    // .{
+    //     .cpu_arch = .riscv64,
+    //     .os_tag = .linux,
+    // },
+    // .{
+    //     .cpu_arch = .arm,
+    //     .os_tag = .linux,
+    // },
+    // .{
+    //     .cpu_arch = .x86_64,
+    //     .os_tag = .windows,
+    // },
+    // .{
+    //     .cpu_arch = .aarch64,
+    //     .os_tag = .macos,
+    // },
+    // .{
+    //     .cpu_arch = .x86_64,
+    //     .os_tag = .macos,
+    // },
+    // Since we are using sqlite, we cannot use wasm32/wasi at this time. Even
+    // with compile errors above, I do not believe wasi will be easily supported
+    // .{
+    //     .cpu_arch = .wasm32,
+    //     .os_tag = .wasi,
+    // },
+};
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -53,23 +93,6 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Creates a step for unit testing. This only builds the test executable
-    // but does not run it.
-    const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-    _ = try universal_lambda.addModules(b, unit_tests);
-
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
-
     try universal_lambda.configureBuild(b, exe);
 
     const aws_dep = b.dependency("aws", .{
@@ -83,11 +106,32 @@ pub fn build(b: *std.Build) !void {
         .use_bundled = true,
     });
     const sqlite_module = sqlite_dep.module("sqlite");
-    for (&[_]*std.Build.Step.Compile{ exe, unit_tests }) |cs| {
-        cs.addModule("aws-signing", aws_signing_module);
-        cs.addModule("sqlite", sqlite_module);
-        cs.addIncludePath(.{ .path = "c" });
-        cs.linkLibrary(sqlite_dep.artifact("sqlite"));
+
+    // Similar to creating the run step earlier, this exposes a `test` step to
+    // the `zig build --help` menu, providing a way for the user to request
+    // running the unit tests.
+    const test_step = b.step("test", "Run unit tests");
+    for (test_targets) |t| {
+        // Creates a step for unit testing. This only builds the test executable
+        // but does not run it.
+        const unit_tests = b.addTest(.{
+            .root_source_file = .{ .path = "src/main.zig" },
+            .target = t,
+            .optimize = optimize,
+        });
+        _ = try universal_lambda.addModules(b, unit_tests);
+
+        const run_unit_tests = b.addRunArtifact(unit_tests);
+        // run_unit_tests.skip_foreign_checks = true;
+
+        test_step.dependOn(&run_unit_tests.step);
+
+        for (&[_]*std.Build.Step.Compile{ exe, unit_tests }) |cs| {
+            cs.addModule("aws-signing", aws_signing_module);
+            cs.addModule("sqlite", sqlite_module);
+            cs.addIncludePath(.{ .path = "c" });
+            cs.linkLibrary(sqlite_dep.artifact("sqlite"));
+        }
     }
 
     var creds_step = b.step("generate_credentials", "Generate credentials for access_keys.csv");
