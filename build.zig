@@ -5,6 +5,7 @@ const test_targets = [_]std.zig.CrossTarget{
     .{}, // native
 
     // We seem to have compile erros with the rest, all due to sqlite
+    // I believe either zig+c files or zig-sqlite is not super cross-target friendly
     // .{
     //     .cpu_arch = .x86_64,
     //     .os_tag = .linux,

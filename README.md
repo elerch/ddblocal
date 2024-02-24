@@ -1,8 +1,8 @@
 DDB Local
 =========
 
-This project presents itself as [Amazon DynamoDB](https://aws.amazon.com/dynamodb/),
-but uses Sqlite for data storage
+This project presents itself as [Amazon
+DynamoDB](https://aws.amazon.com/dynamodb/), but uses Sqlite for data storage
 only supports a handful of operations, and even then not with full fidelity:
 
 * CreateTable
@@ -11,33 +11,9 @@ only supports a handful of operations, and even then not with full fidelity:
 
 UpdateItem, PutItem and GetItem should be trivial to implement. Project name
 mostly mirrors [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html),
-but doesn't have the overhead of a full Java VM, etc. On small data sets, this static executable
+but doesn't have the overhead of a full Java VM, etc. On small data sets, this
 executable will use <10MB of resident memory.
                     ^^^ TODO: New measurement
-
-Running as Docker
------------------
-
-TODO/Not accurate
-
-Latest version can be found at [https://r.lerch.org/repo/ddbbolt/tags/](https://r.lerch.org/repo/ddbbolt/tags/).
-Versions are tagged with the short hash of the git commit, and are
-built as a multi-architecture image based on a scratch image.
-
-You can run the docker image with a command like:
-
-```sh
-docker run \
-  --volume=$(pwd)/ddbbolt:/data \
-  -e FILE=/data/ddb.db          \
-  -e PORT=8080                  \
-  -p 8080:8080                  \
-  -d                            \
-  --name=ddbbolt                \
-  --restart=unless-stopped      \
-  r.lerch.org/ddbbolt:f501abe
-```
-
 
 Security
 --------
@@ -46,16 +22,24 @@ This uses typical IAM authentication, but does not have authorization
 implemented yet. This provides a chicken and egg problem, because we need a
 data store for access keys/secret keys, which would be great to have in...DDB.
 
+Therefore, DDB is designed to adhere to the following algorithm:
+
+1. Check if this is a test account (used for `zig build test`). This uses hard-coded creds.
+2. Check if the account information is in `access_keys.csv`. This file is loaded at startup
+   and contains the root credentials and keys necessary for bootstrap. Future plans
+   are to enable encryption of this file and decryption using an HSM, as it is critical
+   to everything.
+3. Call various services (primarily STS and IAM) if credentials do not exist in #1/#2.
+
 As such, we effectively need a control plane instance on DDB, with appropriate
 access keys/secret keys stored somewhere other than DDB. Therefore, the following
 environment variables are planned:
 
-* IAM_ACCOUNT_ID
 * IAM_ACCESS_KEY
 * IAM_SECRET_KEY
 * IAM_SECRET_FILE: File that will contain the above three values, allowing for cred rotation
-* STS_SERVICE_ENDPOINT
-* IAM_SERVICE_ENDPOINT
+* STS_SERVICE_ENDPOINT (tbd - may not be named this)
+* IAM_SERVICE_ENDPOINT (tbd - may not be named this)
 
 Secret file, thought here is that we can open/read file only if authentication succeeds, but access key
 does not match the ADMIN_ACCESS_KEY. This is a bit of a timing oracle, but not sure we care that much
