@@ -4,6 +4,7 @@ const sqlite = @import("sqlite"); // TODO: If we use this across all services, A
 
 const test_account_key = "09aGW6z6QofVsPlWP9FGqVnshxHWAWrKZwLkwkgWs7w=";
 
+const log = std.log.scoped(.Account);
 const Self = @This();
 
 allocator: std.mem.Allocator,
@@ -13,7 +14,10 @@ pub fn accountForId(allocator: std.mem.Allocator, account_id: []const u8) !Self 
     // TODO: Allow environment variables to house encoded keys. If not in the
     //       environment, check with LocalDB table to get it. We're
     //       building LocalDB, though, so we need that working first...
-    if (!std.mem.eql(u8, account_id, "1234")) return error.NotImplemented;
+    if (!std.mem.eql(u8, account_id, "1234")) {
+        log.err("Got account id '{s}', but only '1234' is valid right now", .{account_id});
+        return error.NotImplemented;
+    }
     var key = try allocator.alloc(u8, encryption.key_length);
     errdefer allocator.free(key);
     try encryption.decodeKey(key[0..encryption.key_length], test_account_key.*);

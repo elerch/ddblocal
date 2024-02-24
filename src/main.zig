@@ -127,8 +127,8 @@ fn getCreds(access: []const u8) ?signing.Credentials {
 
 fn accountForAccessKey(allocator: std.mem.Allocator, access_key: []const u8) ![]const u8 {
     _ = allocator;
-    _ = access_key;
-    return "1234, Get your woman, on the floor";
+    log.debug("Finding account for access key: '{s}'", .{access_key});
+    return "1234";
 }
 /// Function assumes an authenticated request, so signing.verify must be called
 /// and returned true before calling this function. If authentication header
