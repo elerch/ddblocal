@@ -91,7 +91,7 @@ fn executeOperation(
 }
 fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_interface.Context, target: []const u8, headers: std.http.Headers, body_reader: anytype) !void {
     var request = signing.UnverifiedRequest{
-        .method = std.http.Method.PUT,
+        .method = std.http.Method.POST,
         .target = target,
         .headers = headers,
     };
