@@ -13,7 +13,6 @@ UpdateItem, PutItem and GetItem should be trivial to implement. Project name
 mostly mirrors [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html),
 but doesn't have the overhead of a full Java VM, etc. On small data sets, this
 executable will use <10MB of resident memory.
-                    ^^^ TODO: New measurement
 
 Security
 --------
