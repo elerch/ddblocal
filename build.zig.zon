@@ -4,8 +4,8 @@
 
     .dependencies = .{
         .aws = .{
-            .url = "https://git.lerch.org/lobo/aws-sdk-for-zig/archive/d08d0f338fb86f7d679a998ff4f65f4e2d0db595.tar.gz",
-            .hash = "122096bb1480cef9cc4a8abf112f54214de4ab500f6863e86fc919cb5a99533ff7ce",
+            .url = "https://git.lerch.org/api/packages/lobo/generic/aws-sdk-with-models/31324c7e83392ce7aeca13629013870181d1458e/31324c7e83392ce7aeca13629013870181d1458e-with-models.tar.gz",
+            .hash = "1220ae1932ce061440dece024f6d605fb4d00ef3bf03518e2aae0502980108368ee3",
         },
         .sqlite = .{
             .url = "https://github.com/vrischmann/zig-sqlite/archive/19535aab5760eeaf2979a9dadfca3bb21d1594b9.tar.gz",
