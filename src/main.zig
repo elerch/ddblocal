@@ -24,6 +24,24 @@ pub fn main() !u8 {
 }
 
 pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: universal_lambda_interface.Context) ![]const u8 {
+    const builtin = @import("builtin");
+    var rss: std.os.rusage = undefined;
+    if (builtin.os.tag == .linux and builtin.mode == .Debug)
+        rss = std.os.getrusage(std.os.rusage.SELF);
+    defer if (builtin.os.tag == .linux and builtin.mode == .Debug) { // and  debug mode) {
+        const rusage = std.os.getrusage(std.os.rusage.SELF);
+        log.debug(
+            "Request complete, max RSS of process: {d}M. Incremental: {d}K, User: {d}μs, System: {d}μs",
+            .{
+                @divTrunc(rusage.maxrss, 1024),
+                rusage.maxrss - rss.maxrss,
+                (rusage.utime.tv_sec - rss.utime.tv_sec) * std.time.us_per_s +
+                    rusage.utime.tv_usec - rss.utime.tv_usec,
+                (rusage.stime.tv_sec - rss.stime.tv_sec) * std.time.us_per_s +
+                    rusage.stime.tv_usec - rss.stime.tv_usec,
+            },
+        );
+    };
     const access_key = try allocator.dupe(u8, "ACCESS");
     const secret_key = try allocator.dupe(u8, "SECRET");
     test_credential = signing.Credentials.init(allocator, access_key, secret_key, null);
