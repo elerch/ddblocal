@@ -1,0 +1,21 @@
+# This file should be used sparingly. We should probably have a mechanism
+# built in to decrypt it with PKCS#11 or something, because it's the keys
+# to everything (this file -> database metadata -> table level keys).
+#
+# Normal operation is to allow LocalDb to get Account ID from LocalIAM
+# (actually I think this is LocalSTS) with Account ID in hand, LocalDb will
+# retrieve (or generate/retrieve) the encryption key from LocalDb
+#
+# This is, of course, a recursive operation, so at some point we need the base
+# case, which is a key that's not stored in the database (or the source code)
+#
+# That...is the purpose of this file. The existing/new is intended to enable
+# key rotations. This system uses envelope encryption, so table data is
+# encrypted with a key that is stored in the ddbLocal metadata table. On
+# request for rotation, the table metadata will use the existing encoded
+# encryption key to read, then re-encrypt the metadata with the new encoded
+# encryption key. Key rotation, however, remains a TODO in the code
+#
+# To generate a line for this file, use `zig build generate_credentials`
+#
+# Access Key,Secret key,Account Id,Existing encoded encryption key, New encoded encryption key
