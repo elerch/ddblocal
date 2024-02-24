@@ -13,6 +13,13 @@ pub const std_options = struct {
 };
 
 pub fn main() !u8 {
+    var fb_allocator = std.heap.FixedBufferAllocator.init(&creds_buf);
+    const allocator = fb_allocator.allocator();
+    fillRootCreds(allocator) catch |e| {
+        log.err("Error filling root creds. Base authentication will not work until this is fixed: {}", .{e});
+        return e;
+    };
+
     return try universal_lambda.run(null, handler);
 }
 
@@ -96,11 +103,6 @@ fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_inte
         .target = target,
         .headers = headers,
     };
-    if (root_creds == null) {
-        root_creds = std.StringHashMap(signing.Credentials).init(allocator);
-        root_account_mapping = std.StringHashMap([]const u8).init(allocator);
-        Account.root_key_mapping = std.StringHashMap([]const u8).init(allocator);
-    }
     const auth_bypass =
         @import("builtin").mode == .Debug and try std.process.hasEnvVar(allocator, "DEBUG_AUTHN_BYPASS");
     const is_authenticated = auth_bypass or
@@ -125,7 +127,7 @@ fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_inte
 }
 
 var test_credential: signing.Credentials = undefined;
-var root_creds: ?std.StringHashMap(signing.Credentials) = null;
+var root_creds: std.StringHashMap(signing.Credentials) = undefined;
 var root_account_mapping: std.StringHashMap([]const u8) = undefined;
 var creds_buf: [8192]u8 = undefined;
 fn getCreds(access: []const u8) ?signing.Credentials {
@@ -135,20 +137,16 @@ fn getCreds(access: []const u8) ?signing.Credentials {
     // 2. Creds from the root file, ideally used only for bootstrapping
     // 3. Creds from STS GetAccessKeyInfo API call, which should be 99%+ of ops
     if (std.mem.eql(u8, access, "ACCESS")) return test_credential;
-    fillRootCreds() catch |e| {
-        log.err("Error filling root creds. Base authentication will not work until this is fixed: {}", .{e});
-        return null;
-    };
-    log.debug("Creds for access key {s}: {any}", .{ access, root_creds.?.get(access) != null });
-    if (root_creds.?.get(access)) |c| return c;
+    log.debug("Creds for access key {s}: {any}", .{ access, root_creds.get(access) != null });
+    if (root_creds.get(access)) |c| return c;
     log.err("Creds not found in store. STS GetAccessKeyInfo call is not yet implemented", .{});
     return null;
 }
 
-fn fillRootCreds() !void {
-    if (root_creds.?.count() > 0) return;
-    var fb_allocator = std.heap.FixedBufferAllocator.init(&creds_buf);
-    const allocator = fb_allocator.allocator();
+fn fillRootCreds(allocator: std.mem.Allocator) !void {
+    root_creds = std.StringHashMap(signing.Credentials).init(allocator);
+    root_account_mapping = std.StringHashMap([]const u8).init(allocator);
+    Account.root_key_mapping = std.StringHashMap([]const u8).init(allocator);
     var file = std.fs.cwd().openFile("access_keys.csv", .{}) catch |e| {
         log.err("Could not open access_keys.csv to access root creds: {}", .{e});
         return e;
@@ -197,7 +195,7 @@ fn fillRootCreds() !void {
             return error.TooFewValues;
         }
         const global_access_key = try allocator.dupe(u8, access_key);
-        try root_creds.?.put(global_access_key, .{
+        try root_creds.put(global_access_key, .{
             .access_key = global_access_key, // we need to copy all these into our global buffer
             .secret_key = try allocator.dupe(u8, secret_key),
             .session_token = null,
