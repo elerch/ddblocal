@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const encryption = @import("encryption.zig");
 const sqlite = @import("sqlite"); // TODO: If we use this across all services, Account should not have this, and we should have a localdbaccount struct
@@ -10,10 +11,10 @@ const Self = @This();
 allocator: std.mem.Allocator,
 root_account_key: *[encryption.key_length]u8,
 
-pub var root_key_mapping: ?std.StringHashMap([]const u8) = null;
+pub var root_key_mapping: ?std.AutoHashMap(u40, []const u8) = null;
 
-pub fn accountForId(allocator: std.mem.Allocator, account_id: []const u8) !Self {
-    if (std.mem.eql(u8, account_id, "1234")) {
+pub fn accountForId(allocator: std.mem.Allocator, account_id: u40) !Self {
+    if (account_id == 1234) {
         var key = try allocator.alloc(u8, encryption.key_length);
         errdefer allocator.free(key);
         try encryption.decodeKey(key[0..encryption.key_length], test_account_key.*);
@@ -37,7 +38,7 @@ pub fn accountForId(allocator: std.mem.Allocator, account_id: []const u8) !Self 
     }
 
     // TODO: Check STS
-    log.err("Got account id '{s}', but could not find this ('1234' is test account). STS GetAccessKeyInfo not implemented", .{account_id});
+    log.err("Got account id '{d}', but could not find this ('1234' is test account). STS GetAccessKeyInfo not implemented", .{account_id});
     return error.NotImplemented;
 }
 
@@ -59,14 +60,13 @@ pub fn testDbDeinit() void {
 }
 /// Gets the database for this account. If under test, a memory database is used
 /// instead. Will initialize the database with appropriate metadata tables
-pub fn dbForAccount(allocator: std.mem.Allocator, account_id: []const u8) !*sqlite.Db {
-    const builtin = @import("builtin");
+pub fn dbForAccount(allocator: std.mem.Allocator, account_id: u40) !*sqlite.Db {
     if (builtin.is_test and test_retain_db)
         if (test_db) |db| return db;
     // TODO: Need to move this function somewhere central
     // TODO: Need configuration for what directory to use
     // TODO: Should this be a pool, and if so, how would we know when to close?
-    const file_without_path = try std.fmt.allocPrint(allocator, "ddb-{s}.sqlite3", .{account_id});
+    const file_without_path = try std.fmt.allocPrint(allocator, "ddb-{d}.sqlite3", .{account_id});
     defer allocator.free(file_without_path);
     const db_file_name = try std.fs.path.joinZ(allocator, &[_][]const u8{ data_dir, file_without_path });
     defer allocator.free(db_file_name);

@@ -482,7 +482,7 @@ pub const Table = struct {
 /// are stored in here, realistically, this will be the first function called
 /// every time anything interacts with the database, so this function opens
 /// the database for you
-pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: []const u8) !AccountTables {
+pub fn tablesForAccount(allocator: std.mem.Allocator, account_id: u40) !AccountTables {
 
     // TODO: This function should take a list of table names, which can then be used
     // to filter the query below rather than just grabbing everything
@@ -676,7 +676,7 @@ fn insertIntoDm(
     });
 }
 
-fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !*sqlite.Db {
+fn testCreateTable(allocator: std.mem.Allocator, account_id: u40) !*sqlite.Db {
     var db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
@@ -707,7 +707,7 @@ fn testCreateTable(allocator: std.mem.Allocator, account_id: []const u8) !*sqlit
 }
 test "can create a table" {
     const allocator = std.testing.allocator;
-    const account_id = "1234";
+    const account_id = 1234;
     var db = try testCreateTable(allocator, account_id);
     defer allocator.destroy(db);
     defer db.deinit();
@@ -715,7 +715,7 @@ test "can create a table" {
 test "can list tables in an account" {
     Account.test_retain_db = true;
     const allocator = std.testing.allocator;
-    const account_id = "1234";
+    const account_id = 1234;
     var db = try testCreateTable(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
@@ -729,7 +729,7 @@ test "can list tables in an account" {
 test "can put an item in a table in an account" {
     Account.test_retain_db = true;
     const allocator = std.testing.allocator;
-    const account_id = "1234";
+    const account_id = 1234;
     var db = try testCreateTable(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();

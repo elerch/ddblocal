@@ -33,6 +33,13 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, request.event_data, .{});
     defer parsed.deinit();
     const request_params = try parseRequest(request, parsed, writer);
+    defer {
+        for (request_params.table_info.attribute_definitions) |d| {
+            allocator.free(d.*.name);
+            allocator.destroy(d);
+        }
+        allocator.free(request_params.table_info.attribute_definitions);
+    }
     // Parsing does most validation for us, but we also need to make sure that
     // the attributes specified in the key schema actually exist
     var found_keys: u2 = if (request_params.table_info.range_key_attribute_name == null) 0b01 else 0b00;
@@ -54,13 +61,6 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
             writer,
             "Attribute names in KeySchema must also exist in AttributeDefinitions",
         );
-    defer {
-        for (request_params.table_info.attribute_definitions) |d| {
-            allocator.free(d.*.name);
-            allocator.destroy(d);
-        }
-        allocator.free(request_params.table_info.attribute_definitions);
-    }
     var db = try Account.dbForAccount(allocator, account_id);
     defer allocator.destroy(db);
     defer db.deinit();
@@ -144,7 +144,7 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
 
     var al = std.ArrayList(u8).init(allocator);
     var response_writer = al.writer();
-    try response_writer.print("table created for account {s}\n", .{account_id});
+    try response_writer.print("table created for account {d}\n", .{account_id});
     return al.toOwnedSlice();
 }
 

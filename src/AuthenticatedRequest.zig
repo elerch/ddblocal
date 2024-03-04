@@ -5,7 +5,7 @@ event_data: []const u8,
 headers: std.http.Headers,
 status: std.http.Status,
 reason: ?[]const u8,
-account_id: []const u8,
+account_id: u40,
 output_format: OutputFormat,
 
 pub const OutputFormat = enum {
