@@ -12,8 +12,8 @@
             .hash = "12208c654deea149cee27eaa45d0e6515c3d8f97d775a4156cbcce0ff424b5d26ea3",
         },
         .universal_lambda_build = .{
-            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/e5a1099f741ddd6327e015e4c068de5c18d09393.tar.gz",
-            .hash = "122037f0b35ab67002ef039410ae4ddb6805e14c111557ab0ae2ec7837211f7a1c51",
+            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/5f1b1a52beea841e130ea4d878437f9488da0eb7.tar.gz",
+            .hash = "12202e3f5cc4db196d9bef727e10b407413d6dd95a6e94d66f11c4c14dc5ee060b58",
         },
         .flexilib = .{
             .url = "https://git.lerch.org/lobo/flexilib/archive/3d3dab9c792651477932e2b61c9f4794ac694dcb.tar.gz",
