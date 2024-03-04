@@ -429,7 +429,7 @@ test "basic request parsing" {
         .headers = undefined,
         .status = .ok,
         .reason = "",
-        .account_id = "1234",
+        .account_id = 1234,
         .allocator = allocator,
     };
     var al = std.ArrayList(u8).init(allocator);
@@ -462,7 +462,7 @@ test "read item" {
     Account.test_retain_db = true;
     defer Account.test_retain_db = false;
     const allocator = std.testing.allocator;
-    const account_id = "1234";
+    const account_id = 1234;
     var db = try Account.dbForAccount(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
@@ -557,7 +557,7 @@ test "read item" {
             .headers = undefined,
             .status = .ok,
             .reason = "",
-            .account_id = "1234",
+            .account_id = 1234,
             .allocator = allocator,
         };
         var al = std.ArrayList(u8).init(allocator);
@@ -572,7 +572,7 @@ test "read item" {
             .headers = undefined,
             .status = .ok,
             .reason = "",
-            .account_id = "1234",
+            .account_id = 1234,
             .allocator = allocator,
             .event_data =
             \\{

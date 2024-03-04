@@ -558,7 +558,7 @@ test "can create a table" {
         \\ "Tags": [{"Key": "Owner", "Value": "blueTeam"}]
         \\ }
         ,
-        .account_id = "1234",
+        .account_id = 1234,
         .status = .ok,
         .reason = null,
         .headers = std.http.Headers.init(allocator),
@@ -589,7 +589,7 @@ test "will fail an unrecognized request parameter" {
         \\ "Tags": [{"Key": "Owner", "Value": "blueTeam"}]
         \\ }
         ,
-        .account_id = "1234",
+        .account_id = 1234,
         .status = .ok,
         .reason = null,
         .headers = std.http.Headers.init(allocator),
@@ -628,7 +628,7 @@ fn failOnShortTableNames(format: AuthenticatedRequest.OutputFormat) !void {
         \\ "Tags": [{"Key": "Owner", "Value": "blueTeam"}]
         \\ }
         ,
-        .account_id = "1234",
+        .account_id = 1234,
         .status = .ok,
         .reason = null,
         .headers = std.http.Headers.init(allocator),
