@@ -215,7 +215,7 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     //     },
     // ) catch return error.MakeFailed;
     stdout.print(
-        "# access_key: ELAK{s}, secret_key: {s}, account_number: {d}, db_encryption_key: {s}",
+        "# access_key: ELAK{s}, secret_key: {s}, account_number: {d:0>12}, db_encryption_key: {s}",
         .{
             access_key_suffix_encoded,
             encoded_secret,
@@ -224,7 +224,7 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
         },
     ) catch return error.MakeFailed;
     stdout.print(
-        "\n#\n# You can copy/paste the following line into access_keys.csv:\nELAK{s},{s},{d},{s}\n",
+        "\n#\n# You can copy/paste the following line into access_keys.csv:\nELAK{s},{s},{d:0>12},{s}\n",
         .{
             access_key_suffix_encoded,
             encoded_secret,

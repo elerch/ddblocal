@@ -38,7 +38,7 @@ pub fn accountForId(allocator: std.mem.Allocator, account_id: u40) !Self {
     }
 
     // TODO: Check STS
-    log.err("Got account id '{d}', but could not find this ('1234' is test account). STS GetAccessKeyInfo not implemented", .{account_id});
+    log.err("Got account id '{d:0>12}', but could not find this ('1234' is test account). STS GetAccessKeyInfo not implemented", .{account_id});
     return error.NotImplemented;
 }
 
@@ -66,7 +66,7 @@ pub fn dbForAccount(allocator: std.mem.Allocator, account_id: u40) !*sqlite.Db {
     // TODO: Need to move this function somewhere central
     // TODO: Need configuration for what directory to use
     // TODO: Should this be a pool, and if so, how would we know when to close?
-    const file_without_path = try std.fmt.allocPrint(allocator, "ddb-{d}.sqlite3", .{account_id});
+    const file_without_path = try std.fmt.allocPrint(allocator, "ddb-{d:0>12}.sqlite3", .{account_id});
     defer allocator.free(file_without_path);
     const db_file_name = try std.fs.path.joinZ(allocator, &[_][]const u8{ data_dir, file_without_path });
     defer allocator.free(db_file_name);

@@ -144,7 +144,7 @@ pub fn handler(request: *AuthenticatedRequest, writer: anytype) ![]const u8 {
 
     var al = std.ArrayList(u8).init(allocator);
     var response_writer = al.writer();
-    try response_writer.print("table created for account {d}\n", .{account_id});
+    try response_writer.print("table created for account {d:0>12}\n", .{account_id});
     return al.toOwnedSlice();
 }
 
