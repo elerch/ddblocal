@@ -153,34 +153,29 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
+    _ = s;
     // Account id:
     //     Documentation describes account id as a 12 digit number:
     //     https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-identifiers.html
-    //     This can be a random u64, but must be in a 12 digit range, which
-    //     is:
+    //     This can be a random number, but must be in a 12 digit range.
     //
-    //     Min: 0x05f5e100 (0d100000000)
-    //     Max: 0x3b9ac9ff (0d999999999)
+    //     The access key is 32 bit encoded, which leaves us with
+    //     8 * 5 = 40 bits of information to work with. The maximum value of
+    //     a u40 in decimal is 1099511627775, a 13 digit number. So our maximum
+    //     decimal is below, and fits into u40.
+    //
+    //     Min: 0x0000000000 (0d000000000000)
+    //     Max: 0xe8d4a50fff (0d999999999999)
     //
     // Access key:
-    //     Access key is 20 characters and can be represented by base36
-    //     https://en.wikipedia.org/wiki/Base36
-    //     (it is nearly definitely base36 in AWS in practice)
-    //     At least the first two characters are not part of the number...they
-    //     have meaning. AK for a permanent key, AS for a session token.
-    //     We shall use "EL" just...because. Maybe ET later for session tokens.
-    //     This gives us 18 characters to work with, making our range like this:
+    //     This page shows how the access key is put together:
+    //     https://medium.com/@TalBeerySec/a-short-note-on-aws-key-id-f88cc4317489
+    //     tl;dr
+    //     * First 4 characters: designates type of key: We will use "ELAK" for access key
+    //     * Next 8 characters: Account ID, base32 encoded, shifted by one bit
+    //     * Next 8 characters: Unknown. Assume random base32, which would give us 8 * 5 = u40;
     //
-    //     Min:
-    //     NN100000000000000000 (hex: 0xECFF3BCC40CA2000000000)
-    //     Max:
-    //     NNZZZZZZZZZZZZZZZZZZ (hex: 0x2153E468B91C6E0000000000)
     //
-    //     The max value therefore requires a u96 to represent, as does the
-    //     difference between max and min (0x2066e52cecdba40000000000). However,
-    //     Zig 0.11.0 cannot handle random numbers that large
-    //     (https://github.com/ziglang/zig/blob/0.11.0/lib/std/rand.zig#L145),
-    //     so for now we use a random u64 and call it good.
     //
     // Secret Access Key:
     //     In the wild, these are 40 characters and appear to be base64 encoded.
@@ -194,19 +189,11 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
     var prng = std.rand.DefaultPrng.init(seed);
     var rand = prng.random();
-    const account_number = rand.intRangeAtMost(u64, 100000000000, 999999999999);
-    const access_key_suffix: u128 = blk: { // workaround for u64 max on rand.intRangeAtMost
-        const min = 0xECFF3BCC40CA2000000000;
-        // const max = 0x2153E468B91C6E0000000000;
-        // const diff = max - min; // 0x2066e52cecdba40000000000 (is 12 bytes/96 bits)
-        // So we can use a full 64 bit range and just add to the min
-        break :blk @as(u128, rand.int(u64)) + min;
-    };
-    const access_key_suffix_encoded = encode(
-        u128,
-        s.owner.allocator,
-        access_key_suffix,
-    ) catch return error.MakeFailed;
+    const account_number = rand.intRangeAtMost(u40, 0, 999999999999); // 100000000000, 999999999999);
+    const access_key_random_suffix = rand.int(u39);
+    const access_key_suffix: u80 = (@as(u80, account_number) << 39) + @as(u80, access_key_random_suffix);
+    const access_key_suffix_encoded = base32Encode(u80, access_key_suffix);
+    // std.debug.assert(access_key_suffix_encoded.len == 16);
     var secret_key: [30]u8 = undefined;
     rand.bytes(&secret_key); // The rest don't need to be cryptographically secure...does this?
     var encoded_secret: [40]u8 = undefined;
@@ -215,8 +202,20 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     const stdout_raw = std.io.getStdOut().writer();
     var stdout_writer = std.io.bufferedWriter(stdout_raw);
     const stdout = stdout_writer.writer();
+    // stdout.print(
+    //     \\#    account_number: {b:0>80}
+    //     \\#    random_suffix : {b:0>80}
+    //     \\# access_key_suffix: {b:0>80}
+    //     \\
+    // ,
+    //     .{
+    //         @as(u80, account_number) << 39,
+    //         @as(u80, access_key_random_suffix),
+    //         access_key_suffix,
+    //     },
+    // ) catch return error.MakeFailed;
     stdout.print(
-        "# access_key: EL{s}, secret_key: {s}, account_number: {d}, db_encryption_key: {s}",
+        "# access_key: ELAK{s}, secret_key: {s}, account_number: {d}, db_encryption_key: {s}",
         .{
             access_key_suffix_encoded,
             encoded_secret,
@@ -225,7 +224,7 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
         },
     ) catch return error.MakeFailed;
     stdout.print(
-        "\n#\n# You can copy/paste the following line into access_keys.csv:\nEL{s},{s}{d}{s}\n",
+        "\n#\n# You can copy/paste the following line into access_keys.csv:\nELAK{s},{s},{d},{s}\n",
         .{
             access_key_suffix_encoded,
             encoded_secret,
@@ -237,8 +236,9 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
 }
 
 /// encodes an unsigned integer into base36
-pub fn encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]const u8 {
+pub fn base36encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]const u8 {
     const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    std.debug.assert(alphabet.len == 36);
     const ti = @typeInfo(T);
     if (ti != .Int or ti.Int.signedness != .unsigned)
         @compileError("encode only works with unsigned integers");
@@ -248,11 +248,36 @@ pub fn encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]const 
     defer al.deinit();
 
     var remaining = data;
-    while (remaining > 0) : (remaining /= 36) {
-        al.appendAssumeCapacity(alphabet[@as(usize, @intCast(remaining % 36))]);
+    while (remaining > 0) : (remaining /= @as(T, @intCast(alphabet.len))) {
+        al.appendAssumeCapacity(alphabet[@as(usize, @intCast(remaining % alphabet.len))]);
     }
     // This is not exact, but 6 bits
     var rc = try al.toOwnedSlice();
     std.mem.reverse(u8, rc);
+    return rc;
+}
+
+/// Because Base32 is a power of 2, we can directly return an array and avoid
+/// allocations entirely
+/// To trim leading 0s, simply std.mem.trimLeft(u8, encoded_data, "A");
+pub fn base32Encode(comptime T: type, data: T) [@typeInfo(T).Int.bits / 5]u8 {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    std.debug.assert(alphabet.len == 32);
+    const ti = @typeInfo(T);
+    if (ti != .Int or ti.Int.signedness != .unsigned)
+        @compileError("encode only works with unsigned integers");
+    const bits = ti.Int.bits;
+    // We will have exactly 5 bits (2^5 = 32) represented per byte in our final output
+    var rc: [bits / 5]u8 = undefined;
+    var inx: usize = 0;
+    const Shift_type = @Type(.{ .Int = .{
+        .signedness = .unsigned,
+        .bits = @ceil(@log2(@as(f128, @floatFromInt(bits)))),
+    } });
+    // TODO: I think we need a table here to determine the size below
+    while (inx < rc.len) : (inx += 1) {
+        const char_bits: u5 = @as(u5, @truncate(data >> (@as(Shift_type, @intCast(inx * 5)))));
+        rc[rc.len - @as(usize, @intCast(inx)) - 1] = alphabet[@as(usize, @intCast(char_bits))]; // 5 bits from inx
+    }
     return rc;
 }
