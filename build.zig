@@ -191,7 +191,12 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     var rand = prng.random();
     const account_number = rand.intRangeAtMost(u40, 0, 999999999999); // 100000000000, 999999999999);
     const access_key_random_suffix = rand.int(u39);
-    const access_key_suffix: u80 = (@as(u80, account_number) << 39) + @as(u80, access_key_random_suffix);
+    // We need the most significant bit as a 1 to make the key compatible with
+    // AWS. Like...you can literally send these keys to public AWS `aws sts get-access-key-info --access-key-id <blah>`
+    // and get your account number (after changing ELAK to AKIA!
+    //
+    // Without this bit set, AWS' sts will complain that this is not a valid key
+    const access_key_suffix: u80 = (1 << 79) | (@as(u80, account_number) << 39) + @as(u80, access_key_random_suffix);
     const access_key_suffix_encoded = base32Encode(u80, access_key_suffix);
     // std.debug.assert(access_key_suffix_encoded.len == 16);
     var secret_key: [30]u8 = undefined;
