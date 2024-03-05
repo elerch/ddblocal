@@ -197,7 +197,8 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     //
     // Without this bit set, AWS' sts will complain that this is not a valid key
     const access_key_suffix: u80 = (1 << 79) | (@as(u80, account_number) << 39) + @as(u80, access_key_random_suffix);
-    const access_key_suffix_encoded = base32Encode(u80, access_key_suffix);
+    var access_key_suffix_encoded: [16]u8 = undefined;
+    base32Encode(u80, access_key_suffix, &access_key_suffix_encoded);
     // std.debug.assert(access_key_suffix_encoded.len == 16);
     var secret_key: [30]u8 = undefined;
     rand.bytes(&secret_key); // The rest don't need to be cryptographically secure...does this?
@@ -240,7 +241,7 @@ fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{
     stdout_writer.flush() catch return error.MakeFailed;
 }
 
-/// encodes an unsigned integer into base36
+/// encodes an unsigned integer into base36. Caller owns the memory returned
 pub fn base36encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]const u8 {
     const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     std.debug.assert(alphabet.len == 36);
@@ -263,9 +264,9 @@ pub fn base36encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]
 }
 
 /// Because Base32 is a power of 2, we can directly return an array and avoid
-/// allocations entirely
+/// allocations entirely. A pointer to the output array must be bits/5 long
 /// To trim leading 0s, simply std.mem.trimLeft(u8, encoded_data, "A");
-pub fn base32Encode(comptime T: type, data: T) [@typeInfo(T).Int.bits / 5]u8 {
+pub fn base32Encode(comptime T: type, data: T, encoded: *[@typeInfo(T).Int.bits / 5]u8) void {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     std.debug.assert(alphabet.len == 32);
     const ti = @typeInfo(T);
@@ -273,16 +274,15 @@ pub fn base32Encode(comptime T: type, data: T) [@typeInfo(T).Int.bits / 5]u8 {
         @compileError("encode only works with unsigned integers");
     const bits = ti.Int.bits;
     // We will have exactly 5 bits (2^5 = 32) represented per byte in our final output
-    var rc: [bits / 5]u8 = undefined;
+    // var rc: [bits / 5]u8 = undefined;
     var inx: usize = 0;
     const Shift_type = @Type(.{ .Int = .{
         .signedness = .unsigned,
         .bits = @ceil(@log2(@as(f128, @floatFromInt(bits)))),
     } });
     // TODO: I think we need a table here to determine the size below
-    while (inx < rc.len) : (inx += 1) {
+    while (inx < encoded.len) : (inx += 1) {
         const char_bits: u5 = @as(u5, @truncate(data >> (@as(Shift_type, @intCast(inx * 5)))));
-        rc[rc.len - @as(usize, @intCast(inx)) - 1] = alphabet[@as(usize, @intCast(char_bits))]; // 5 bits from inx
+        encoded[encoded.len - @as(usize, @intCast(inx)) - 1] = alphabet[@as(usize, @intCast(char_bits))]; // 5 bits from inx
     }
-    return rc;
 }
