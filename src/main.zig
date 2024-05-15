@@ -9,8 +9,8 @@ const Account = @import("Account.zig");
 
 const log = std.log.scoped(.dynamodb);
 
-pub const std_options = struct {
-    pub const log_scope_levels = &[_]std.log.ScopeLevel{.{ .scope = .aws_signing, .level = .info }};
+pub const std_options = .{
+    .log_scope_levels = &.{.{ .scope = .aws_signing, .level = .info }},
 };
 
 pub fn main() !u8 {
@@ -32,12 +32,16 @@ pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: un
     var fis = std.io.fixedBufferStream(event_data);
 
     try authenticateUser(allocator, context, context.request.target, context.request.headers, fis.reader());
-    try setContentType(&context.headers, "application/x-amz-json-1.0", false);
+    try setContentType(allocator, &context.headers, "application/x-amz-json-1.0", false);
     // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html#API_CreateTable_Examples
     // Operation is in X-Amz-Target
     // event_data is json
     // X-Amz-Target: DynamoDB_20120810.CreateTable
-    const target_value_or_null = context.request.headers.getFirstValue("X-Amz-Target");
+    const target_value_or_null = blk: {
+        for (context.request.headers) |h|
+            if (std.ascii.eqlIgnoreCase(h.name, "X-Amz-Target")) break :blk h.value;
+        break :blk null;
+    };
     const target_value = if (target_value_or_null) |t| t else {
         context.status = .bad_request;
         context.reason = "Missing X-Amz-Target header";
@@ -76,12 +80,24 @@ pub fn handler(allocator: std.mem.Allocator, event_data: []const u8, context: un
     context.status = .bad_request;
     return error.OperationUnsupported;
 }
-fn setContentType(headers: *std.http.Headers, content_type: []const u8, overwrite: bool) !void {
-    if (headers.contains("content-type")) {
-        if (!overwrite) return;
-        _ = headers.delete("content-type");
+fn setContentType(allocator: std.mem.Allocator, headers: *[]const std.http.Header, content_type: []const u8, overwrite: bool) !void {
+    for (headers.*, 0..) |h, i| {
+        if (std.ascii.eqlIgnoreCase(h.name, "content-type")) {
+            if (overwrite) {
+                const new_headers = try allocator.dupe(std.http.Header, headers.*);
+                errdefer allocator.free(new_headers);
+                new_headers[i] = .{ .name = "Content-Type", .value = content_type };
+                headers.* = new_headers;
+            }
+            return;
+        }
     }
-    try headers.append("Content-Type", content_type);
+    // need to add to the array
+    const new_headers = try allocator.alloc(std.http.Header, headers.len + 1);
+    errdefer allocator.free(new_headers);
+    @memcpy(new_headers[0..headers.len], headers.*);
+    new_headers[new_headers.len - 1] = .{ .name = "Content-Type", .value = content_type };
+    headers.* = new_headers;
 }
 fn executeOperation(
     request: *AuthenticatedRequest,
@@ -98,8 +114,9 @@ fn executeOperation(
         return err;
     };
 }
-fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_interface.Context, target: []const u8, headers: std.http.Headers, body_reader: anytype) !void {
+fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_interface.Context, target: []const u8, headers: []const std.http.Header, body_reader: anytype) !void {
     const request = signing.UnverifiedRequest{
+        .allocator = allocator,
         .method = std.http.Method.POST,
         .target = target,
         .headers = headers,
@@ -215,7 +232,7 @@ fn fillRootCreds(allocator: std.mem.Allocator) !void {
 }
 
 const NullAllocator = struct {
-    const thing = 0;
+    const thing: u8 = 0;
     const vtable = std.mem.Allocator.VTable{
         .alloc = alloc,
         .resize = resize,
@@ -268,8 +285,12 @@ fn accountForAccessKey(allocator: std.mem.Allocator, access_key: []const u8) !u4
 /// Function assumes an authenticated request, so signing.verify must be called
 /// and returned true before calling this function. If authentication header
 /// is not found, environment variable will be used
-fn accountId(allocator: std.mem.Allocator, headers: std.http.Headers) !u40 {
-    const auth_header = headers.getFirstValue("Authorization");
+fn accountId(allocator: std.mem.Allocator, headers: []const std.http.Header) !u40 {
+    const auth_header = blk: {
+        for (headers) |h|
+            if (std.ascii.eqlIgnoreCase(h.name, "Authorization")) break :blk h.value;
+        break :blk null;
+    };
     if (auth_header) |h| {
         // AWS4-HMAC-SHA256 Credential=ACCESS/20230908/us-west-2/s3/aws4_request, SignedHeaders=accept;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class, Signature=fcc43ce73a34c9bd1ddf17e8a435f46a859812822f944f9eeb2aabcd64b03523
         const start = std.mem.indexOf(u8, h, "Credential=").? + "Credential=".len;
