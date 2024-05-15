@@ -361,7 +361,7 @@ test "basic request parsing failure" {
     };
     var al = std.ArrayList(u8).init(allocator);
     defer al.deinit();
-    var writer = al.writer();
+    const writer = al.writer();
     var parms = try Params.parseRequest(allocator, &request, writer);
     defer parms.deinit();
     try std.testing.expectError(error.InvalidPadding, parms.validate());
@@ -398,7 +398,7 @@ test "basic request parsing" {
     };
     var al = std.ArrayList(u8).init(allocator);
     defer al.deinit();
-    var writer = al.writer();
+    const writer = al.writer();
     var parms = try Params.parseRequest(allocator, &request, writer);
     defer parms.deinit();
     try std.testing.expect(parms.return_consumed_capacity == .none);
@@ -477,7 +477,7 @@ test "all types request parsing" {
     };
     var al = std.ArrayList(u8).init(allocator);
     defer al.deinit();
-    var writer = al.writer();
+    const writer = al.writer();
     var parms = try Params.parseRequest(allocator, &request, writer);
     defer parms.deinit();
     try parms.validate();
@@ -497,7 +497,7 @@ test "all types request parsing" {
     try std.testing.expectEqualStrings("Binary", put[2].name);
     try std.testing.expect(put[2].value == .binary);
     try std.testing.expect(put[2].value.binary.len > 0);
-    var buf = try allocator.alloc(u8, "this text is base64-encoded".len);
+    const buf = try allocator.alloc(u8, "this text is base64-encoded".len);
     defer allocator.free(buf);
     try std.base64.standard.Decoder.decode(buf, put[2].value.binary);
     try std.testing.expectEqualStrings("this text is base64-encoded", buf);
@@ -509,7 +509,7 @@ test "write item" {
     defer Account.testDbDeinit();
     const allocator = std.testing.allocator;
     const account_id = 1234;
-    var db = try Account.dbForAccount(allocator, account_id);
+    const db = try Account.dbForAccount(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
@@ -591,6 +591,6 @@ test "write item" {
     };
     var al = std.ArrayList(u8).init(allocator);
     defer al.deinit();
-    var writer = al.writer();
+    const writer = al.writer();
     _ = try handler(&request, writer);
 }

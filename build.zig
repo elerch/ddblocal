@@ -1,5 +1,5 @@
 const std = @import("std");
-const universal_lambda = @import("universal_lambda_build");
+const universal_lambda_build = @import("universal-lambda-zig");
 
 // This seems to fail for some reason. zig-sqlite does a lot of messing with
 // the target. So instead, we will handle this in the CI/CD system at the
@@ -95,9 +95,15 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    try universal_lambda.configureBuild(b, exe);
+    const universal_lambda_zig_dep = b.dependency("universal-lambda-zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    // All modules should be added before this is called
+    try universal_lambda_build.configureBuild(b, exe, universal_lambda_zig_dep);
+    _ = universal_lambda_build.addImports(b, exe, universal_lambda_zig_dep);
 
-    const exe_aws_dep = b.dependency("aws", .{
+    const exe_aws_dep = b.dependency("aws-zig", .{
         .target = target,
         .optimize = optimize,
     });
@@ -108,16 +114,17 @@ pub fn build(b: *std.Build) !void {
         .use_bundled = true,
     });
     const exe_sqlite_module = exe_sqlite_dep.module("sqlite");
-    exe.addModule("aws-signing", exe_aws_signing_module);
-    exe.addModule("sqlite", exe_sqlite_module);
+    exe.root_module.addImport("aws-signing", exe_aws_signing_module);
+    exe.root_module.addImport("sqlite", exe_sqlite_module);
     exe.addIncludePath(.{ .path = "c" });
     exe.linkLibrary(exe_sqlite_dep.artifact("sqlite"));
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
-    for (test_targets) |t| {
-        const aws_dep = b.dependency("aws", .{
+    for (test_targets) |ct| {
+        const t = b.resolveTargetQuery(ct);
+        const aws_dep = b.dependency("aws-zig", .{
             .target = t,
             .optimize = optimize,
         });
@@ -135,15 +142,15 @@ pub fn build(b: *std.Build) !void {
             .target = t,
             .optimize = optimize,
         });
-        _ = try universal_lambda.addModules(b, unit_tests);
+        _ = universal_lambda_build.addImports(b, unit_tests, universal_lambda_zig_dep);
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
         // run_unit_tests.skip_foreign_checks = true;
 
         test_step.dependOn(&run_unit_tests.step);
 
-        unit_tests.addModule("aws-signing", aws_signing_module);
-        unit_tests.addModule("sqlite", sqlite_module);
+        unit_tests.root_module.addImport("aws-signing", aws_signing_module);
+        unit_tests.root_module.addImport("sqlite", sqlite_module);
         unit_tests.addIncludePath(.{ .path = "c" });
         unit_tests.linkLibrary(sqlite_dep.artifact("sqlite"));
     }
@@ -152,7 +159,7 @@ pub fn build(b: *std.Build) !void {
     creds_step.makeFn = generateCredentials;
 }
 
-fn generateCredentials(s: *std.build.Step, prog_node: *std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
+fn generateCredentials(s: *std.Build.Step, prog_node: *std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
     _ = s;
     // Account id:
     //     Documentation describes account id as a 12 digit number:
@@ -258,7 +265,7 @@ pub fn base36encode(comptime T: type, allocator: std.mem.Allocator, data: T) ![]
         al.appendAssumeCapacity(alphabet[@as(usize, @intCast(remaining % alphabet.len))]);
     }
     // This is not exact, but 6 bits
-    var rc = try al.toOwnedSlice();
+    const rc = try al.toOwnedSlice();
     std.mem.reverse(u8, rc);
     return rc;
 }

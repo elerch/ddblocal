@@ -2,7 +2,7 @@ const std = @import("std");
 
 allocator: std.mem.Allocator,
 event_data: []const u8,
-headers: std.http.Headers,
+headers: []const std.http.Header,
 status: std.http.Status,
 reason: ?[]const u8,
 account_id: u40,

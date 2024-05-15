@@ -99,7 +99,7 @@ fn executeOperation(
     };
 }
 fn authenticateUser(allocator: std.mem.Allocator, context: universal_lambda_interface.Context, target: []const u8, headers: std.http.Headers, body_reader: anytype) !void {
-    var request = signing.UnverifiedRequest{
+    const request = signing.UnverifiedRequest{
         .method = std.http.Method.POST,
         .target = target,
         .headers = headers,
@@ -167,7 +167,7 @@ fn fillRootCreds(allocator: std.mem.Allocator) !void {
     var line_num: usize = 1;
     while (reader.streamUntilDelimiter(line_writer, '\n', null)) : (line_num += 1) {
         defer line.clearRetainingCapacity();
-        var relevant_line = line.items[0 .. std.mem.indexOfScalar(u8, line.items, '#') orelse line.items.len];
+        const relevant_line = line.items[0 .. std.mem.indexOfScalar(u8, line.items, '#') orelse line.items.len];
         const relevant_line_trimmed = std.mem.trim(u8, relevant_line, " \t");
         var value_iterator = std.mem.splitScalar(u8, relevant_line_trimmed, ',');
         if (std.mem.trim(u8, value_iterator.peek().?, " \t").len == 0) continue;

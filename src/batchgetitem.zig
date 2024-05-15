@@ -295,7 +295,7 @@ const Params = struct {
                         writer,
                         "ExpressionAttributeNames must be an object",
                     );
-                var count = v.object.count();
+                const count = v.object.count();
                 var names = v.object.iterator();
                 var hashmap = std.StringHashMap([]const u8).init(aa);
                 try hashmap.ensureTotalCapacity(@as(u32, @intCast(count)));
@@ -434,7 +434,7 @@ test "basic request parsing" {
     };
     var al = std.ArrayList(u8).init(allocator);
     defer al.deinit();
-    var writer = al.writer();
+    const writer = al.writer();
     var parms = try Params.parseRequest(allocator, &request, writer);
     defer parms.deinit();
     try std.testing.expect(parms.return_consumed_capacity == .total);
@@ -463,7 +463,7 @@ test "read item" {
     defer Account.test_retain_db = false;
     const allocator = std.testing.allocator;
     const account_id = 1234;
-    var db = try Account.dbForAccount(allocator, account_id);
+    const db = try Account.dbForAccount(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
 
@@ -562,7 +562,7 @@ test "read item" {
         };
         var al = std.ArrayList(u8).init(allocator);
         defer al.deinit();
-        var writer = al.writer();
+        const writer = al.writer();
         _ = try @import("batchwriteitem.zig").handler(&request, writer);
     }
 
@@ -596,7 +596,7 @@ test "read item" {
         };
         var al = std.ArrayList(u8).init(allocator);
         defer al.deinit();
-        var writer = al.writer();
+        const writer = al.writer();
         const output = try handler(&request, writer);
         defer allocator.free(output);
         // TODO: Fix this

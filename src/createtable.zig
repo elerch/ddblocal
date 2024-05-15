@@ -561,7 +561,7 @@ test "can create a table" {
         .account_id = 1234,
         .status = .ok,
         .reason = null,
-        .headers = std.http.Headers.init(allocator),
+        .headers = &.{},
         .output_format = .text,
     };
     const output = try handler(&request, std.io.null_writer);
@@ -592,7 +592,7 @@ test "will fail an unrecognized request parameter" {
         .account_id = 1234,
         .status = .ok,
         .reason = null,
-        .headers = std.http.Headers.init(allocator),
+        .headers = &.{},
         .output_format = .text,
     };
     var al = std.ArrayList(u8).init(allocator);
@@ -631,7 +631,7 @@ fn failOnShortTableNames(format: AuthenticatedRequest.OutputFormat) !void {
         .account_id = 1234,
         .status = .ok,
         .reason = null,
-        .headers = std.http.Headers.init(allocator),
+        .headers = &.{},
         .output_format = format,
     };
     var al = std.ArrayList(u8).init(allocator);

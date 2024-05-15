@@ -77,7 +77,7 @@ pub const Attribute = struct {
         //  {
         //    "string" : {...attribute value...}
         //  }
-        var attribute_count = value.count();
+        const attribute_count = value.count();
         if (attribute_count == 0)
             try returnException(
                 request,
@@ -149,11 +149,11 @@ pub const AttributeValue = union(AttributeTypeName) {
         if (std.mem.eql(u8, token.string, "binary_set") or std.mem.eql(u8, token.string, "BS"))
             rc = Self{ .binary_set = try std.json.innerParse([][]const u8, allocator, source, options) };
         if (std.mem.eql(u8, token.string, "list") or std.mem.eql(u8, token.string, "L")) {
-            var json = try std.json.Value.jsonParse(allocator, source, options);
+            const json = try std.json.Value.jsonParse(allocator, source, options);
             rc = Self{ .list = json.array };
         }
         if (std.mem.eql(u8, token.string, "map") or std.mem.eql(u8, token.string, "M")) {
-            var json = try std.json.Value.jsonParse(allocator, source, options);
+            const json = try std.json.Value.jsonParse(allocator, source, options);
             rc = Self{ .map = json.object };
         }
         if (rc == null) return error.InvalidEnumTag;
@@ -182,11 +182,11 @@ pub const AttributeValue = union(AttributeTypeName) {
         if (source.object.get("binary_set") orelse source.object.get("BS")) |attr|
             rc = Self{ .binary_set = try std.json.innerParseFromValue([][]const u8, allocator, attr, options) };
         if (source.object.get("list") orelse source.object.get("L")) |attr| {
-            var json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
+            const json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
             rc = Self{ .list = json.array };
         }
         if (source.object.get("map") orelse source.object.get("M")) |attr| {
-            var json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
+            const json = try std.json.Value.jsonParseFromValue(allocator, attr, options);
             rc = Self{ .map = json.object };
         }
         if (rc == null) return error.InvalidEnumTag;
@@ -262,7 +262,7 @@ pub const AttributeValue = union(AttributeTypeName) {
             return error.InvalidPadding;
         }
         if (leftover_idx == null) return;
-        var leftover = source[leftover_idx.?..];
+        const leftover = source[leftover_idx.?..];
         if (decoder.pad_char) |pad_char| {
             const padding_len = acc_len / 2;
             var padding_chars: usize = 0;
@@ -677,7 +677,7 @@ fn insertIntoDm(
 }
 
 fn testCreateTable(allocator: std.mem.Allocator, account_id: u40) !*sqlite.Db {
-    var db = try Account.dbForAccount(allocator, account_id);
+    const db = try Account.dbForAccount(allocator, account_id);
     const account = try Account.accountForId(allocator, account_id); // This will get us the encryption key needed
     defer account.deinit();
     var hash = AttributeDefinition{ .name = "Artist", .type = .S };
@@ -716,7 +716,7 @@ test "can list tables in an account" {
     Account.test_retain_db = true;
     const allocator = std.testing.allocator;
     const account_id = 1234;
-    var db = try testCreateTable(allocator, account_id);
+    const db = try testCreateTable(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
     var table_list = try tablesForAccount(allocator, account_id);
@@ -730,7 +730,7 @@ test "can put an item in a table in an account" {
     Account.test_retain_db = true;
     const allocator = std.testing.allocator;
     const account_id = 1234;
-    var db = try testCreateTable(allocator, account_id);
+    const db = try testCreateTable(allocator, account_id);
     defer allocator.destroy(db);
     defer Account.testDbDeinit();
     var table_list = try tablesForAccount(allocator, account_id);

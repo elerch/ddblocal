@@ -97,7 +97,7 @@ pub fn encryptAndEncode(allocator: std.mem.Allocator, key: [key_length]u8, plain
     const ciphertext = try encrypt(allocator, key, plaintext);
     defer allocator.free(ciphertext);
     const Encoder = std.base64.standard.Encoder;
-    var encoded_ciphertext = try allocator.alloc(u8, Encoder.calcSize(ciphertext.len));
+    const encoded_ciphertext = try allocator.alloc(u8, Encoder.calcSize(ciphertext.len));
     errdefer allocator.free(encoded_ciphertext);
     return Encoder.encode(encoded_ciphertext, ciphertext);
 }
@@ -108,14 +108,14 @@ pub fn encryptAndEncodeWithNonce(allocator: std.mem.Allocator, key: [key_length]
     const ciphertext = try encryptWithNonce(allocator, key, nonce, plaintext);
     defer allocator.free(ciphertext);
     const Encoder = std.base64.standard.Encoder;
-    var encoded_ciphertext = try allocator.alloc(u8, Encoder.calcSize(ciphertext.len));
+    const encoded_ciphertext = try allocator.alloc(u8, Encoder.calcSize(ciphertext.len));
     errdefer allocator.free(encoded_ciphertext);
     return Encoder.encode(encoded_ciphertext, ciphertext);
 }
 
 /// Decrypts data. Use deriveKey function to get a key from password/salt
 pub fn decrypt(allocator: std.mem.Allocator, key: [key_length]u8, ciphertext: []const u8) ![]const u8 {
-    var plaintext = try allocator.alloc(
+    const plaintext = try allocator.alloc(
         u8,
         ciphertext.len - nonce_length - std.crypto.aead.salsa_poly.XSalsa20Poly1305.tag_length,
     );
@@ -140,7 +140,7 @@ pub fn decrypt(allocator: std.mem.Allocator, key: [key_length]u8, ciphertext: []
 pub fn decodeAndDecrypt(allocator: std.mem.Allocator, key: [key_length]u8, encoded_ciphertext: []const u8) ![]const u8 {
     const Decoder = std.base64.standard.Decoder;
     const ciphertext_len = try Decoder.calcSizeForSlice(encoded_ciphertext);
-    var ciphertext = try allocator.alloc(u8, ciphertext_len);
+    const ciphertext = try allocator.alloc(u8, ciphertext_len);
     defer allocator.free(ciphertext);
     try std.base64.standard.Decoder.decode(ciphertext, encoded_ciphertext);
     return try decrypt(allocator, key, ciphertext);
