@@ -9,7 +9,7 @@ env:
   ACTIONS_RUNTIME_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   ACTIONS_RUNTIME_URL: ${{ env.GITHUB_SERVER_URL }}/api/actions_pipeline/
 jobs:
-  build-zig-0.11.0-amd64-host:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
