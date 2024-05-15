@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) !void {
     try universal_lambda_build.configureBuild(b, exe, universal_lambda_zig_dep);
     _ = universal_lambda_build.addImports(b, exe, universal_lambda_zig_dep);
 
-    const exe_aws_dep = b.dependency("aws-zig", .{
+    const exe_aws_dep = b.dependency("aws", .{
         .target = target,
         .optimize = optimize,
     });
@@ -124,7 +124,7 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     for (test_targets) |ct| {
         const t = b.resolveTargetQuery(ct);
-        const aws_dep = b.dependency("aws-zig", .{
+        const aws_dep = b.dependency("aws", .{
             .target = t,
             .optimize = optimize,
         });

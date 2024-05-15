@@ -11,9 +11,9 @@
             .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/f3d80b4afe8c13031b6cff051e93deaeadb1d268.tar.gz",
             .hash = "122093d59b28dcd0201eaa1587ca78e11c06fb563b2cb9b554aaa5f7bab0ae34432e",
         },
-        .@"aws-zig" = .{
-            .url = "https://git.lerch.org/api/packages/lobo/generic/aws-sdk-with-models/007f2f588aa30fd2c62d6a037fb87bace8a83710/007f2f588aa30fd2c62d6a037fb87bace8a83710-with-models.tar.gz",
-            .hash = "1220f128554146e2f58f223a51f1839f49012294a8163a445e8320889539edcda9b3",
+        .aws = .{
+            .url = "https://git.lerch.org/api/packages/lobo/generic/aws-sdk-with-models/c60c40f627983b35cc4ba762f510d729c80b47c3/c60c40f627983b35cc4ba762f510d729c80b47c3-with-models.tar.gz",
+            .hash = "12208171bfd8fccdb28beab1978cf63b8557c9d210afb15ee59960342fd6b5476640",
         },
     },
     .paths = .{
