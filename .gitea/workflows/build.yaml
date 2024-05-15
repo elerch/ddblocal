@@ -17,6 +17,8 @@ jobs:
         with:
           version: 0.12.0
       - uses: elerch/zig-action-cache@v1.1.6
+      - name: Standard build
+        run: zig build --verbose
       - name: Run tests
         run: zig build test --verbose
       - name: Build other platforms
