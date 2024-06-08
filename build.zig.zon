@@ -4,16 +4,16 @@
 
     .dependencies = .{
         .sqlite = .{
-            .url = "https://github.com/vrischmann/zig-sqlite/archive/fd17eb9a4ea35f515cc7c2e4755a3a5e284a0bd3.tar.gz",
-            .hash = "1220e0300613f2b949a8328c5b1d9ba84777f2258c1535039afcb536e9e1228d2881",
+            .url = "https://github.com/vrischmann/zig-sqlite/archive/91e5fedd15c5ea3cb42ccceefb3d0f4bb9bad68f.tar.gz",
+            .hash = "1220ba277845cb3cece7a7a1f929b920c97e9085bb644471c5dc8c72571f1485c75f",
         },
         .@"universal-lambda-zig" = .{
-            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/f3d80b4afe8c13031b6cff051e93deaeadb1d268.tar.gz",
-            .hash = "122093d59b28dcd0201eaa1587ca78e11c06fb563b2cb9b554aaa5f7bab0ae34432e",
+            .url = "https://git.lerch.org/lobo/universal-lambda-zig/archive/562fd85dfbc3f7c056ca5a6e1d2c07863fbbf304.tar.gz",
+            .hash = "1220a3807d02bbefa12977795e0a2c27849c77b8ec4d866803692fd311ca49bdef36",
         },
         .aws = .{
-            .url = "https://git.lerch.org/api/packages/lobo/generic/aws-sdk-with-models/c60c40f627983b35cc4ba762f510d729c80b47c3/c60c40f627983b35cc4ba762f510d729c80b47c3-with-models.tar.gz",
-            .hash = "12208171bfd8fccdb28beab1978cf63b8557c9d210afb15ee59960342fd6b5476640",
+            .url = "https://git.lerch.org/api/packages/lobo/generic/aws-sdk-with-models/61592f039dce27c1723422862cc93f9095ed34ce/61592f039dce27c1723422862cc93f9095ed34ce-with-models.tar.gz",
+            .hash = "1220de091b7c5a26944eebca195ca57a0128fa3903ec6e01c9ad2db877dceb2f0674",
         },
     },
     .paths = .{

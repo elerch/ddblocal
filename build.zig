@@ -62,7 +62,7 @@ pub fn build(b: *std.Build) !void {
         .name = "ddblocal",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -116,7 +116,7 @@ pub fn build(b: *std.Build) !void {
     const exe_sqlite_module = exe_sqlite_dep.module("sqlite");
     exe.root_module.addImport("aws-signing", exe_aws_signing_module);
     exe.root_module.addImport("sqlite", exe_sqlite_module);
-    exe.addIncludePath(.{ .path = "c" });
+    // exe.addIncludePath(.{ .path = "c" });
     exe.linkLibrary(exe_sqlite_dep.artifact("sqlite"));
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
@@ -138,7 +138,7 @@ pub fn build(b: *std.Build) !void {
         // Creates a step for unit testing. This only builds the test executable
         // but does not run it.
         const unit_tests = b.addTest(.{
-            .root_source_file = .{ .path = "src/main.zig" },
+            .root_source_file = b.path("src/main.zig"),
             .target = t,
             .optimize = optimize,
         });
@@ -151,7 +151,7 @@ pub fn build(b: *std.Build) !void {
 
         unit_tests.root_module.addImport("aws-signing", aws_signing_module);
         unit_tests.root_module.addImport("sqlite", sqlite_module);
-        unit_tests.addIncludePath(.{ .path = "c" });
+        // unit_tests.addIncludePath(b.path ("c" ));
         unit_tests.linkLibrary(sqlite_dep.artifact("sqlite"));
     }
 
@@ -159,7 +159,7 @@ pub fn build(b: *std.Build) !void {
     creds_step.makeFn = generateCredentials;
 }
 
-fn generateCredentials(s: *std.Build.Step, prog_node: *std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
+fn generateCredentials(s: *std.Build.Step, prog_node: std.Progress.Node) error{ MakeFailed, MakeSkipped }!void {
     _ = s;
     // Account id:
     //     Documentation describes account id as a 12 digit number:
